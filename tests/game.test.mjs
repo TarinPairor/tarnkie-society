@@ -6,6 +6,7 @@ import * as engine from '../world.js';
 import {advanceWalk,walkingSprite,spriteFlip} from '../animation.js';
 import {ForestConnection} from '../network.js';
 import {createTouchControls} from '../touch.js';
+import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees} from '../trees.js';
 import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat} from '../chat.js';
 import {HUG_RANGE,HUG_DURATION} from '../hug-config.js';
 const {SIZE,TILE,makeWorld,canStand,moveActor,makeCreatures,updateCreature,randomFromSeed}=engine;
@@ -51,7 +52,7 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  const context=new Proxy({measureText:()=>({width:24})},{get:(o,k)=>o[k]||(()=>{}),set:(o,k,v)=>(o[k]=v,true)});
  function element(selector){if(!elements.has(selector))elements.set(selector,{width:800,height:500,value:'TARIN-01',hidden:false,style:{},tagName:'CANVAS',handlers:{},classList:{add(){}},getContext:()=>context,getBoundingClientRect:()=>({width:1000,height:600}),setAttribute(){},appendChild(){},focus(){},setPointerCapture(){},addEventListener(n,fn){this.handlers[n]=fn;}});return elements.get(selector);}
  const windowEvents={};
- const sandbox={QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,HUG_RANGE,HUG_DURATION,...engine,advanceWalk,walkingSprite,spriteFlip,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
+ const sandbox={TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,HUG_RANGE,HUG_DURATION,...engine,advanceWalk,walkingSprite,spriteFlip,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
  vm.createContext(sandbox);
  const code=readFileSync(new URL('../game.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/start\(\);\s*$/,'globalThis.started=start();');
  vm.runInContext(code,sandbox);await sandbox.started;
@@ -106,6 +107,11 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  assert.match(element('#chat-announcement').textContent,/Hello Amy!/);
  vm.runInContext(`sendChat(QUICK_MESSAGES[0]);`,sandbox);assert.equal(sandbox.sentMessage.text,'Hi!');
  windowEvents.keydown({key:'Escape',target:{tagName:'INPUT'},preventDefault(){}});assert.equal(element('#chat-panel').hidden,true);
+
+ vm.runInContext(`state.hugRequests=[{id:'sent-one',from:localId,to:'other'}];receiveState(state);updateHugUI();`,sandbox);assert.equal(element('#hug-action').hidden,true);assert.match(element('#hug-notice').textContent,/sent/);
+ vm.runInContext(`globalThis.realDateNow=Date.now;globalThis.noticeClock=1000;Date.now=()=>noticeClock;showError('A hug or request is already in progress.','hug-request');updateChatUI();`,sandbox);
+ assert.equal(element('#hug-notice').hidden,false);assert.equal(element('#connection-status').hidden,true);assert.equal(element('#chat-toggle').hidden,false);
+ vm.runInContext(`noticeClock+=2300;updateHugUI();Date.now=realDateNow;`,sandbox);assert.equal(element('#hug-notice').hidden,true);
  assert(readFileSync(new URL('../assets/tarin.json',import.meta.url),'utf8').includes('tarin-front'));
 });
 

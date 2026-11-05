@@ -57,3 +57,6 @@ h1{font-size:16px;font-weight:600;margin:0 0 15px}
 @media(max-height:550px){.chat-panel,.game-frame:has(#map-panel:not([hidden])) .chat-panel{top:max(14px,env(safe-area-inset-top));right:76px;max-width:calc(100% - 94px);max-height:calc(100dvh - 28px)}.chat-toggle,.game-frame:has(#map-panel:not([hidden])) .chat-toggle{top:auto;bottom:calc(120px + env(safe-area-inset-bottom));right:auto;left:max(18px,env(safe-area-inset-left))}}
 .game-frame:has(#chat-panel:not([hidden])) .touch-controls{visibility:hidden}
 .quick-messages button{-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}@media(any-pointer:coarse){.quick-messages button{min-height:44px}}
+/* Transient action notices stay below the top-corner controls and never catch taps. */
+#hug-notice{top:76px;max-width:min(280px,calc(100% - 40px));z-index:4;pointer-events:none}#connection-status{pointer-events:none}
+@media(max-height:550px){#hug-notice{top:18px;max-width:calc(100% - 190px)}}

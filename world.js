@@ -23,7 +23,7 @@ export function makeWorld(seed='TARIN-01'){
   const i=y*SIZE+x,clearing=settlements.some(v=>Math.hypot(x-v.x,y-v.y)<10);
   if(blocked[i]||tiles[i]===2)continue;
   const density=.20+.12*Math.sin(x*.14)*Math.cos(y*.17);
-  if(!clearing&&random()<density){trees.push({x:x*TILE+16,y:y*TILE+25,variant:Math.floor(random()*3),size:.85+random()*.35});blocked[i]=1;}
+  if(!clearing&&random()<density){trees.push({x:x*TILE+16,y:y*TILE+25,variant:Math.floor(random()*3),size:.85+random()*.35});blocked[i]=2;}
   else if(random()<.025)decor.push({x:x*TILE+16,y:y*TILE+24,kind:['flower','plant','mushroom','strawberry'][Math.floor(random()*4)],scale:.5+random()*.25});
  }
  // Walkable world perimeter and all obstacle checks use the same tile grid.
@@ -31,7 +31,14 @@ export function makeWorld(seed='TARIN-01'){
 }
 export function canStand(world,x,y,radius=8){
  if(x<radius||y<radius||x>=SIZE*TILE-radius||y>=SIZE*TILE-radius)return false;
- for(const dx of [-radius,radius])for(const dy of [-radius,radius])if(world.blocked[Math.floor((y+dy)/TILE)*SIZE+Math.floor((x+dx)/TILE)])return false;
+ const minX=Math.floor((x-radius)/TILE),maxX=Math.floor((x+radius)/TILE),minY=Math.floor((y-radius)/TILE),maxY=Math.floor((y+radius)/TILE);
+ for(let ty=minY;ty<=maxY;ty++)for(let tx=minX;tx<=maxX;tx++){
+  const obstacle=world.blocked[ty*SIZE+tx];if(!obstacle)continue;
+  if(obstacle===1)return false;
+  // Trees block only their 10×8 trunk footprint, not the entire 32×32 tile.
+  const trunkX=tx*TILE+16,trunkY=ty*TILE+26;
+  if(x+radius>trunkX-5&&x-radius<trunkX+5&&y+radius>trunkY-4&&y-radius<trunkY+4)return false;
+ }
  return true;
 }
 export function moveActor(world,actor,dx,dy){

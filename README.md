@@ -52,3 +52,9 @@ Messages appear in wrapping speech bubbles above the sender for six seconds and 
 Hug composition places Amy on the left and Tarin on the right at the same baseline, six world pixels apart, independent of who requests. Amy has a right-facing profile hug pose; Tarin uses the supplied left-facing pose. Drawing order is consistent on both clients so the bodies overlap during the embrace.
 
 Creature density is intentionally sparse: two of each normal creature and one of each monster across the entire forest (20 wanderers total). They spawn away from the starting point and at least six tiles apart. Decorative plants, berries, flowers, and mushrooms use a 2.5% spawn chance, reduced from 11%. Forest trees and village structures retain their density.
+
+## Tree cover and transient notices
+
+Trees have opaque 68×90 scaled canopies, about 17% larger than before, and a 10×8 world-pixel trunk collision footprint instead of blocking an entire 32×32 tile. Players can step under foliage, and foreground trees hide sprites naturally. There is no player reveal marker or automatic canopy transparency. Concealed players' name tags, speech bubbles, and nearby hug actions are suppressed so those overlays do not expose their hiding position. This is visual cover; the minimap continues to show only your own position.
+
+Outgoing hug confirmations and action errors flash briefly, fade, and disappear after 2.2 seconds of real time. They never intercept taps and no longer occupy the connection-status banner. The recipient's interactive Accept/Deny prompt still lasts until the request expires or is resolved.

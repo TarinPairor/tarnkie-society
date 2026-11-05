@@ -1,3 +1,4 @@
+import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees} from './trees.js';
 import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat} from './chat.js';
 import {HUG_RANGE,HUG_DURATION} from './hug-config.js';
 import {createTouchControls} from './touch.js';
@@ -8,7 +9,7 @@ const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d
 const keys=new Set(),sprites=new Map(),treeSprites=[],grassSprites=[];
 let world,creatures=[],player,collection=[],camera={x:0,y:0},paused=false,ready=false,time=0,previous=0,viewWidth=800,viewHeight=500,mapVisible=false;
 let menuOpen=false,connection=null,joined=false,localId=null,revision=null,remotePlayers=[];
-let hugRequests=[],hugEffects=new Map(),currentHugRequest=null,hugTarget=null,lastHugNotice=null,noticeUntil=0;
+let hugRequests=[],hugEffects=new Map(),currentHugRequest=null,hugTarget=null,lastHugNotice=null,noticeUntil=0,lastOutgoingHug=null;
 let chatOpen=false,pendingChat=null,lastChatIds=new Map();
 let selectedCharacter='tarin',savedProfile=null,touchControls=null;
 function clearInput(){keys.clear();touchControls?.reset();}
@@ -105,6 +106,7 @@ function receiveState(state){
  const host=state.hostId===localId;$('#seed').disabled=!host;$('#random-seed').disabled=!host;$('#seed-submit').disabled=!host;
  $('#seed-note').textContent=host?'Changing this seed regenerates the forest for everyone.':'Only the first connected player can change the forest.';
  hugRequests=state.hugRequests||[];
+ const sent=hugRequests.find(r=>r.from===localId);if(sent&&sent.id!==lastOutgoingHug){lastOutgoingHug=sent.id;showHugNotice('Hug request sent.');}
  const incoming=hugRequests.find(r=>r.to===localId);
  if(incoming&&incoming.id!==currentHugRequest?.id)clearInput();
  currentHugRequest=incoming||null;
@@ -126,7 +128,7 @@ function drawSprite(kind,x,y,size,flip=false,bob=0){
  const s=sprites.get(kind);if(!s)return;
  const height=size*s.height/s.width;ctx.save();ctx.translate(Math.round(x),Math.round(y+bob));if(flip)ctx.scale(-1,1);ctx.drawImage(s,Math.round(-size/2),Math.round(-height),size,height);ctx.restore();
 }
-function drawTree(tree){const width=58*tree.size,height=77*tree.size;ctx.save();if(tree.y>player.y&&Math.abs(tree.x-player.x)<width/2&&tree.y-player.y<height)ctx.globalAlpha=.55;shadow(tree.x,tree.y,38);ctx.drawImage(treeSprites[tree.variant],Math.round(tree.x-width/2),Math.round(tree.y-height+7),Math.round(width),Math.round(height));ctx.restore();}
+function drawTree(tree){const width=TREE_WIDTH*tree.size,height=TREE_HEIGHT*tree.size;shadow(tree.x,tree.y,38);ctx.drawImage(treeSprites[tree.variant],Math.round(tree.x-width/2),Math.round(tree.y-height+7),Math.round(width),Math.round(height));}
 function drawStructure(s){
  if(s.kind==='house'){shadow(s.x,s.y,74);drawSprite('house',s.x,s.y+10,86);return;}
  const x=Math.round(s.x),y=Math.round(s.y);const rect=(dx,dy,w,h,color)=>{ctx.fillStyle=color;ctx.fillRect(x+dx,y+dy,w,h)};
@@ -144,6 +146,7 @@ function render(){
   if(tile===2){ctx.fillStyle='#8b895050';for(const [ox,oy] of [[-1,0],[1,0],[0,-1],[0,1]]){const xx=x+ox,yy=y+oy;if(xx>=0&&yy>=0&&xx<SIZE&&yy<SIZE&&world.tiles[yy*SIZE+xx]!==2){if(ox)ctx.fillRect(x*TILE+(ox>0?29:0),y*TILE,3,32);else ctx.fillRect(x*TILE,y*TILE+(oy>0?29:0),32,3);}}}
  }
  for(const d of world.decor)if(visible(d.x,d.y,30))drawSprite(d.kind,d.x,d.y,24*d.scale);
+ const concealed=new Set([...remotePlayers,...(joined?[player]:[])].filter(p=>hiddenByTrees(world.trees,p)).map(p=>p.id));
  const draws=[];
  for(const tree of world.trees)if(visible(tree.x,tree.y))draws.push({y:tree.y,draw:()=>drawTree(tree)});
  for(const s of world.structures)if(visible(s.x,s.y))draws.push({y:s.y,draw:()=>drawStructure(s)});
@@ -153,30 +156,29 @@ function render(){
  }});
  for(const p of [...remotePlayers,...(joined?[player]:[])])if(visible(p.x,p.y,60))draws.push({y:p.y,layer:p.hugging?(p.kind==='tarin'?2:1):0,draw:()=>{
   const size=p.kind==='amy'?32:43;shadow(p.x,p.y,22);drawSprite(walkingSprite(p,p.kind||selectedCharacter),p.x,p.y,size,spriteFlip(p,p.kind||selectedCharacter));
+  if(concealed.has(p.id))return;
   ctx.font='8px sans-serif';ctx.textAlign='center';const width=ctx.measureText(p.name||'').width+10;const nameX=p.x+(p.hugging?(p.flip?16:-16):0);ctx.fillStyle='#183127d9';ctx.fillRect(Math.round(nameX-width/2),Math.round(p.y-size-15),width,12);ctx.fillStyle='#f1ebcf';ctx.fillText(p.name||'',Math.round(nameX),Math.round(p.y-size-6));
  }});
  draws.sort((a,b)=>a.y-b.y||(a.layer||0)-(b.layer||0));for(const d of draws)d.draw();
- // A small marker keeps Tarin visible even where multiple canopies overlap.
- for(const tree of world.trees)if(tree.y>player.y&&Math.abs(tree.x-player.x)<30&&tree.y-player.y<72){ctx.fillStyle='#e8eacb';ctx.fillRect(Math.round(player.x)-1,Math.round(player.y)-25,3,3);}
  drawHugHearts();
- drawChatBubbles();
+ drawChatBubbles(concealed);
  ctx.setTransform(1,0,0,1,0,0);
  const nearest=world.settlements.find(v=>Math.hypot(player.x/TILE-v.x,player.y/TILE-v.y)<12);$('#location-name').textContent=nearest?.name||'Deep forest';$('#coordinates').textContent=`${Math.floor(player.x/TILE)}, ${Math.floor(player.y/TILE)}`;
  if(mapVisible){mapCtx.imageSmoothingEnabled=false;mapCtx.drawImage(mapBackground,0,0);mapCtx.strokeStyle='#edf3cda0';mapCtx.lineWidth=1;mapCtx.strokeRect(left/TILE,top/TILE,viewWidth/TILE,viewHeight/TILE);mapCtx.fillStyle='#f6edc8';mapCtx.fillRect(Math.floor(player.x/TILE)-1,Math.floor(player.y/TILE)-1,3,3);}
 }
-function showHugNotice(text){$('#hug-notice').textContent=text;noticeUntil=time+3;$('#hug-notice').hidden=false;}
+function showHugNotice(text){const notice=$('#hug-notice');notice.textContent=text;noticeUntil=Date.now()+2200;notice.hidden=false;if(!reducedMotion){notice.getAnimations?.().forEach(a=>a.cancel());notice.animate?.([{opacity:0,offset:0},{opacity:1,offset:.08},{opacity:1,offset:.75},{opacity:0,offset:1}],{duration:2200,fill:'both'});}}
 function offerHug(){if(hugRequests.some(r=>r.from===localId||r.to===localId)||!hugTarget||!joined||!connection?.welcomed||paused||menuOpen||chatOpen||player.hugging)return;connection.send({type:'hug-request',targetId:hugTarget.id});clearInput();}
 function respondToHug(accept){if(!currentHugRequest||!connection?.welcomed)return;connection.send({type:'hug-response',requestId:currentHugRequest.id,accept});currentHugRequest=null;$('#hug-prompt').hidden=true;clearInput();canvas.focus();}
 $('#hug-action').onclick=offerHug;$('#hug-accept').onclick=()=>respondToHug(true);$('#hug-deny').onclick=()=>respondToHug(false);
 function updateHugUI(){
  const available=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen;
- hugTarget=available&&!player.hugging?remotePlayers.filter(p=>!p.hugging&&Math.hypot(p.x-player.x,p.y-player.y)<=HUG_RANGE).sort((a,b)=>Math.hypot(a.x-player.x,a.y-player.y)-Math.hypot(b.x-player.x,b.y-player.y))[0]:null;
+ hugTarget=available&&!player.hugging?remotePlayers.filter(p=>!p.hugging&&!hiddenByTrees(world.trees,p)&&Math.hypot(p.x-player.x,p.y-player.y)<=HUG_RANGE).sort((a,b)=>Math.hypot(a.x-player.x,a.y-player.y)-Math.hypot(b.x-player.x,b.y-player.y))[0]:null;
  const outgoing=hugRequests.find(r=>r.from===localId),action=$('#hug-action');
- action.hidden=!available||(!hugTarget&&!outgoing)||!!currentHugRequest||!!player.hugging;
+ action.hidden=!available||!hugTarget||!!outgoing||!!currentHugRequest||!!player.hugging;
  action.disabled=!!outgoing;action.textContent=outgoing?'Hug requested…':hugTarget?`Hug ${hugTarget.name} · H`:'';
  $('#hug-prompt').hidden=!available||!currentHugRequest;
  if(currentHugRequest){$('#hug-question').textContent=`${currentHugRequest.fromName} would like to hug you.`;$('#hug-countdown').textContent='Move away to cancel. Requests expire after 10 seconds.';}
- if(time>=noticeUntil)$('#hug-notice').hidden=true;
+ if(Date.now()>=noticeUntil)$('#hug-notice').hidden=true;
 }
 function drawHugHearts(){
  const actors=[player,...remotePlayers];
@@ -212,9 +214,9 @@ function updateChatUI(){
  if(!available&&chatOpen)setChatOpen(false);
  if(pendingChat&&time-pendingChat.sentAt>5){pendingChat=null;$('#chat-feedback').textContent='Message not confirmed. Try sending again.';}
 }
-function drawChatBubbles(){
+function drawChatBubbles(concealed=new Set()){
  for(const p of [...remotePlayers,...(joined?[player]:[])]){
-  if(!p.chat||time>=p.chatUntil||!visible(p.x,p.y,100))continue;
+  if(concealed.has(p.id)||!p.chat||time>=p.chatUntil||!visible(p.x,p.y,100))continue;
   ctx.save();ctx.font='9px sans-serif';ctx.textAlign='left';ctx.textBaseline='top';
   const maxWidth=Math.min(126,viewWidth-30),lines=wrapChat(p.chat.text,text=>ctx.measureText(text).width,maxWidth-16);
   const width=Math.max(45,...lines.map(line=>ctx.measureText(line).width+16)),height=lines.length*12+12;
@@ -236,7 +238,7 @@ async function start(){
   $('#player-name').focus();requestAnimationFrame(frame);
  }catch(error){$('#loading').textContent=`The forest could not load. Run npm install and npm run dev in the game folder, then open http://localhost:5174/. ${error.message}`;$('#loading').classList.add('error');}
 }
-function showError(message,context){if(context==='chat'){pendingChat=null;$('#chat-feedback').textContent=message;return;}$('#join-error').textContent=message;$('#join-error').hidden=false;$('#join-button').disabled=false;if(joined){$('#connection-status').textContent=message;$('#connection-status').hidden=false;}}
+function showError(message,context){if(context==='chat'){pendingChat=null;$('#chat-feedback').textContent=message;return;}if(joined){if(connection?.welcomed)$('#connection-status').hidden=true;showHugNotice(message);return;}$('#join-error').textContent=message;$('#join-error').hidden=false;$('#join-button').disabled=false;}
 connection=new ForestConnection({url:`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/ws`,onState:receiveState,
  onWelcome(message){savedProfile={name:$('#player-name').value.trim(),character:selectedCharacter,token:message.token};try{sessionStorage.setItem('forest-profile',JSON.stringify(savedProfile));}catch{}localId=message.id;joined=true;revision=null;$('#login').hidden=true;canvas.setAttribute('aria-label',`Explore as ${selectedCharacter==='amy'?'Amy':'Tarin'}. WASD or arrows to walk, Shift to run. Open the menu for controls.`);$('#join-button').disabled=false;$('#session-name').textContent=`${$('#player-name').value.trim()} · ${selectedCharacter==='amy'?'Amy':'Tarin'}`;setPaused(false);closeMenu();},
  onStatus(status){$('#connection-status').textContent=status;$('#connection-status').hidden=status==='Connected';if(status!=='Connected'){clearInput();if(player)player.walking=false;for(const a of remotePlayers)a.walking=false;}},onError:showError});
