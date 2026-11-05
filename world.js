@@ -24,7 +24,7 @@ export function makeWorld(seed='TARIN-01'){
   if(blocked[i]||tiles[i]===2)continue;
   const density=.20+.12*Math.sin(x*.14)*Math.cos(y*.17);
   if(!clearing&&random()<density){trees.push({x:x*TILE+16,y:y*TILE+25,variant:Math.floor(random()*3),size:.85+random()*.35});blocked[i]=1;}
-  else if(random()<.11)decor.push({x:x*TILE+16,y:y*TILE+24,kind:['flower','plant','mushroom','strawberry'][Math.floor(random()*4)],scale:.5+random()*.25});
+  else if(random()<.025)decor.push({x:x*TILE+16,y:y*TILE+24,kind:['flower','plant','mushroom','strawberry'][Math.floor(random()*4)],scale:.5+random()*.25});
  }
  // Walkable world perimeter and all obstacle checks use the same tile grid.
  return {seed,tiles,blocked,trees,decor,structures,settlements,spawn:{x:72*TILE+16,y:73*TILE+16}};
@@ -44,10 +44,17 @@ export function moveActor(world,actor,dx,dy){
 }
 export function makeCreatures(world,types){
  const random=randomFromSeed(world.seed+'-creatures'),creatures=[];
- for(const type of types){for(let j=0;j<7;j++){
-  const v=world.settlements[j%world.settlements.length];let x,y;
-  for(let attempt=0;attempt<1000;attempt++){const spread=j<5?18:65;x=(j<5?v.x:72)*TILE+(random()-.5)*spread*TILE;y=(j<5?v.y:72)*TILE+(random()-.5)*spread*TILE;if(canStand(world,x,y))break;}
-  if(!canStand(world,x,y)){x=world.spawn.x;y=world.spawn.y;}
+ for(const type of types){
+  // Human characters belong to real players, never to the wandering AI pool.
+  if(type.id==='amy'||!['Creatures','Monsters'].includes(type.category))continue;
+  const count=type.category==='Monsters'?1:2;
+  for(let j=0;j<count;j++){
+  let x,y,found=false;
+  for(let attempt=0;attempt<1000;attempt++){
+   x=(4+random()*(SIZE-8))*TILE;y=(4+random()*(SIZE-8))*TILE;
+   if(canStand(world,x,y)&&Math.hypot(x-world.spawn.x,y-world.spawn.y)>=10*TILE&&creatures.every(a=>Math.hypot(a.x-x,a.y-y)>=6*TILE)){found=true;break;}
+  }
+  if(!found)continue;
   creatures.push({kind:type.id,name:type.name,x,y,homeX:x,homeY:y,angle:random()*Math.PI*2,timer:random()*3,state:'idle',speed:16+random()*16,phase:random()*6,radius:5,flip:false});
  }}return creatures;
 }

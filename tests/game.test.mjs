@@ -39,7 +39,8 @@ test('collision prevents walking through trees, buildings, fences, or world boun
 });
 test('all creature types spawn and wander without combat or escaping the terrain',()=>{
  const world=makeWorld('wander'),actors=makeCreatures(world,types),random=randomFromSeed('ai');
- assert.equal(actors.length,types.length*7);for(const t of types)assert(actors.some(a=>a.kind===t.id));
+ const wildTypes=types.filter(t=>['Creatures','Monsters'].includes(t.category));
+ assert.equal(actors.length,wildTypes.reduce((count,t)=>count+(t.category==='Monsters'?1:2),0));for(const t of wildTypes)assert(actors.some(a=>a.kind===t.id));assert(!actors.some(a=>a.kind==='amy'));
  const before=actors.map(a=>[a.x,a.y]);let moved=0;
  for(let n=0;n<400;n++)for(const a of actors)updateCreature(world,a,.04,random);
  actors.forEach((a,i)=>{assert(canStand(world,a.x,a.y,a.radius));assert(['idle','wander'].includes(a.state));if(Math.hypot(a.x-before[i][0],a.y-before[i][1])>2)moved++;});
@@ -106,4 +107,13 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  vm.runInContext(`sendChat(QUICK_MESSAGES[0]);`,sandbox);assert.equal(sandbox.sentMessage.text,'Hi!');
  windowEvents.keydown({key:'Escape',target:{tagName:'INPUT'},preventDefault(){}});assert.equal(element('#chat-panel').hidden,true);
  assert(readFileSync(new URL('../assets/tarin.json',import.meta.url),'utf8').includes('tarin-front'));
+});
+
+test('rare spawns exclude AI Amy, stay spread out, and keep the starting area quiet',()=>{
+ for(const seed of ['TARIN-01','rare','new-forest']){
+  const world=makeWorld(seed),actors=makeCreatures(world,types);
+  assert(actors.length<=26);assert(!actors.some(a=>a.kind==='amy'));assert(world.decor.length<500);
+  for(const a of actors){assert(canStand(world,a.x,a.y));assert(Math.hypot(a.x-world.spawn.x,a.y-world.spawn.y)>=10*TILE);}
+  for(let i=0;i<actors.length;i++)for(let j=i+1;j<actors.length;j++)assert(Math.hypot(actors[i].x-actors[j].x,actors[i].y-actors[j].y)>=6*TILE);
+ }
 });

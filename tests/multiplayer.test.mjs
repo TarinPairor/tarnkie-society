@@ -91,3 +91,10 @@ test('server honors analog joystick strength and keeps keyboard diagonal speed b
  const full=a.y-initial.y,gentle=b.y-initial.y,diagonal=Math.hypot(c.x-initial.x,c.y-initial.y);
  assert(Math.abs(gentle/full-.25)<1e-8);assert(Math.abs(diagonal-full)<1e-8);
 });
+
+test('only one connected player can be Amy; leaving releases the character',()=>{
+ const room=new ForestRoom(types),a=join(room,'Amy one','amy');
+ assert.throws(()=>join(room,'Amy two','amy'),/already being played/);
+ assert(!room.snapshot().creatures.some(a=>a.kind==='amy'));
+ room.logout(a);assert.doesNotThrow(()=>join(room,'Amy two','amy'));
+});

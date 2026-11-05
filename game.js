@@ -44,7 +44,7 @@ function makeTextures(){
 }
 const mapBackground=surface(SIZE,SIZE),mapBackgroundCtx=mapBackground.getContext('2d');
 function generate(seed){
- world=makeWorld(seed);const types=collection.filter(o=>['Creatures','Monsters','People'].includes(o.category));creatures=makeCreatures(world,types);
+ world=makeWorld(seed);const types=collection.filter(o=>['Creatures','Monsters'].includes(o.category));creatures=makeCreatures(world,types);
  player={...world.spawn,radius:7,flip:false,walking:false};camera={x:player.x,y:player.y};
  for(let y=0;y<SIZE;y++)for(let x=0;x<SIZE;x++){
   const i=y*SIZE+x;mapBackgroundCtx.fillStyle=world.tiles[i]===2?'#c4ad78':world.blocked[i]?'#34573b':'#6d8950';mapBackgroundCtx.fillRect(x,y,1,1);

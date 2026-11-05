@@ -5,7 +5,7 @@ import {ForestRoom} from '../multiplayer.js';
 import {HUG_DURATION,HUG_REQUEST_TTL,HUG_RANGE} from '../hug-config.js';
 import {walkingSprite} from '../animation.js';
 import {canStand} from '../world.js';
-function setup(){let time=100;const room=new ForestRoom([],{now:()=>time});const a=room.join({name:'Tarin',character:'tarin'},{}),b=room.join({name:'Amy',character:'amy'},{}),c=room.join({name:'Other',character:'amy'},{});return {room,a,b,c,advance:ms=>time+=ms};}
+function setup(){let time=100;const room=new ForestRoom([],{now:()=>time});const a=room.join({name:'Tarin',character:'tarin'},{}),b=room.join({name:'Amy',character:'amy'},{}),c=room.join({name:'Other',character:'tarin'},{});return {room,a,b,c,advance:ms=>time+=ms};}
 test('hug waits for the addressed player’s explicit consent and exposes only involved requests',()=>{
  const {room,a,b,c}=setup(),request=room.hugs.request(a,b.id);
  assert(!a.hugId);assert(!b.hugId);assert.equal(room.snapshot(b.id).hugRequests[0].id,request.id);assert.equal(room.snapshot(c.id).hugRequests.length,0);

@@ -17,6 +17,7 @@ export class ForestRoom {
   name=name.trim();let p=this.sessions.get(token);
   if(p?.connection)throw new Error('This session is already connected.');
   if([...this.sessions.values()].some(other=>other!==p&&other.name.toLowerCase()===name.toLowerCase()))throw new Error('That name is already in the forest. Choose another.');
+  if(character==='amy'&&[...this.sessions.values()].some(other=>other!==p&&other.connection&&other.kind==='amy'))throw new Error('Amy is already being played. Choose Tarin or wait until Amy leaves.');
   if(!p){if(this.sessions.size>=64)throw new Error('The forest is full. Try again shortly.');p={id:randomUUID(),token:randomUUID(),...this.world.spawn,radius:7,walkDistance:0,walking:false,flip:false};this.sessions.set(p.token,p);}
   Object.assign(p,{name,kind:character,connection,input:{x:0,y:0,run:false},inputAt:this.now(),disconnectedAt:null});
   return p;

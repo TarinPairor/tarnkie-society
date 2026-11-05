@@ -7,7 +7,7 @@ npm install
 npm run dev
 ```
 
-Open the exact address printed by the server, normally **http://localhost:5174/**. If a Python server or another process occupies that port, the game automatically tries the next available port. You can explicitly use port 5175 with `npm run dev -- --port 5175`. Enter a unique display name, choose **Tarin** or **Amy**, and join. Open a second browser/tab with another name to play together. Both characters can be selected by multiple players.
+Open the exact address printed by the server, normally **http://localhost:5174/**. If a Python server or another process occupies that port, the game automatically tries the next available port. You can explicitly use port 5175 with `npm run dev -- --port 5175`. Enter a unique display name, choose **Tarin** or **Amy**, and join. Open a second browser/tab with another name to play together. Amy is limited to one connected player at a time. Other players can choose Tarin. Amy never appears as a wandering AI character.
 
 For devices on the same Wi-Fi, open **http://<server-computer-LAN-IP>:5174/** on each device. All browsers must connect to the same Node server. HTTP and WebSockets share this port; HTTPS deployments automatically use WSS. A Python static server cannot run multiplayer.
 
@@ -50,3 +50,5 @@ Tap the speech-bubble icon in the top-right corner, or press **Enter** / **C**, 
 Messages appear in wrapping speech bubbles above the sender for six seconds and synchronize over WebSockets. Each player's newest message replaces their previous bubble; there is no persistent chat history. The server validates messages and applies an 800 ms cooldown per sender. Speech clears on disconnect or world regeneration. Quick messages and typed messages share the same delivery behavior.
 
 Hug composition places Amy on the left and Tarin on the right at the same baseline, six world pixels apart, independent of who requests. Amy has a right-facing profile hug pose; Tarin uses the supplied left-facing pose. Drawing order is consistent on both clients so the bodies overlap during the embrace.
+
+Creature density is intentionally sparse: two of each normal creature and one of each monster across the entire forest (20 wanderers total). They spawn away from the starting point and at least six tiles apart. Decorative plants, berries, flowers, and mushrooms use a 2.5% spawn chance, reduced from 11%. Forest trees and village structures retain their density.

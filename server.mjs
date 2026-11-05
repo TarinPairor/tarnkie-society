@@ -9,7 +9,7 @@ import {ForestRoom} from './multiplayer.js';
 export function createGameServer(){
  const root=fileURLToPath(new URL('.',import.meta.url));
  const collection=JSON.parse(readFileSync(new URL('./assets/collection.json',import.meta.url)));
- const room=new ForestRoom(collection.filter(o=>['People','Creatures','Monsters'].includes(o.category)));
+ const room=new ForestRoom(collection.filter(o=>['Creatures','Monsters'].includes(o.category)));
  const server=http.createServer(async(req,res)=>{try{
   const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
   const file=path.resolve(root,'.'+(pathname.endsWith('/')?pathname+'index.html':pathname));
