@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {advanceWalk,walkingSprite} from '../animation.js';
+import {advanceWalk,walkingSprite,spriteFlip} from '../animation.js';
 const actors=JSON.parse(readFileSync(new URL('../assets/actors.json',import.meta.url)));
 
 test('Tarin and Amy alternate two steps, loop, and return to standing when stopped',()=>{
@@ -34,4 +34,15 @@ test('bundled frames use the supplied custom art and keep consistent dimensions'
   assert.notDeepEqual(frames[0].pixels,frames[1].pixels);
  }
  for(const n of [1,2])assert.deepEqual(actors[`amy-walk-${n}`].pixels.slice(0,9*16),actors.amy.pixels.slice(0,9*16));
+});
+
+test('Tarin’s left-facing source is mirrored for rightward movement only',()=>{
+ for(const distance of [0,14]){
+  const left={walking:true,walkDistance:distance,flip:true},right={walking:true,walkDistance:distance,flip:false};
+  assert.match(walkingSprite(left,'tarin'),/^tarin-walk-/);
+  assert.equal(spriteFlip(left,'tarin'),false);assert.equal(spriteFlip(right,'tarin'),true);
+ }
+ assert.equal(spriteFlip({hugging:true,flip:true},'tarin'),false);
+ assert.equal(spriteFlip({hugging:true,flip:false},'amy'),false);
+ assert.equal(spriteFlip({flip:true},'amy'),true);
 });

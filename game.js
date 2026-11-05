@@ -2,7 +2,7 @@ import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat} from './chat.js';
 import {HUG_RANGE,HUG_DURATION} from './hug-config.js';
 import {createTouchControls} from './touch.js';
 import {ForestConnection} from './network.js';
-import {walkingSprite} from './animation.js';
+import {walkingSprite,spriteFlip} from './animation.js';
 import {TILE,SIZE,makeWorld,makeCreatures,randomFromSeed} from './world.js';
 const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d'),map=$('#map'),mapCtx=map.getContext('2d');
 const keys=new Set(),sprites=new Map(),treeSprites=[],grassSprites=[];
@@ -149,13 +149,13 @@ function render(){
  for(const s of world.structures)if(visible(s.x,s.y))draws.push({y:s.y,draw:()=>drawStructure(s)});
  for(const a of creatures)if(visible(a.x,a.y,40))draws.push({y:a.y,draw:()=>{
   shadow(a.x,a.y,17);const flying=['butterfly','bat','ghost'].includes(a.kind),bob=reducedMotion?0:flying?-8+Math.sin(time*3+a.phase)*3:a.walking?Math.sin(time*10+a.phase)*1.1:0;
-  drawSprite(walkingSprite(a,a.kind),a.x,a.y,28,a.flip,a.kind==='amy'?0:bob);
+  drawSprite(walkingSprite(a,a.kind),a.x,a.y,28,spriteFlip(a,a.kind),a.kind==='amy'?0:bob);
  }});
- for(const p of [...remotePlayers,...(joined?[player]:[])])if(visible(p.x,p.y,60))draws.push({y:p.y,draw:()=>{
-  const size=p.kind==='amy'?32:43;shadow(p.x,p.y,22);drawSprite(walkingSprite(p,p.kind||selectedCharacter),p.x,p.y,size,p.flip);
-  ctx.font='8px sans-serif';ctx.textAlign='center';const width=ctx.measureText(p.name||'').width+10;ctx.fillStyle='#183127d9';ctx.fillRect(Math.round(p.x-width/2),Math.round(p.y-size-15),width,12);ctx.fillStyle='#f1ebcf';ctx.fillText(p.name||'',Math.round(p.x),Math.round(p.y-size-6));
+ for(const p of [...remotePlayers,...(joined?[player]:[])])if(visible(p.x,p.y,60))draws.push({y:p.y,layer:p.hugging?(p.kind==='tarin'?2:1):0,draw:()=>{
+  const size=p.kind==='amy'?32:43;shadow(p.x,p.y,22);drawSprite(walkingSprite(p,p.kind||selectedCharacter),p.x,p.y,size,spriteFlip(p,p.kind||selectedCharacter));
+  ctx.font='8px sans-serif';ctx.textAlign='center';const width=ctx.measureText(p.name||'').width+10;const nameX=p.x+(p.hugging?(p.flip?16:-16):0);ctx.fillStyle='#183127d9';ctx.fillRect(Math.round(nameX-width/2),Math.round(p.y-size-15),width,12);ctx.fillStyle='#f1ebcf';ctx.fillText(p.name||'',Math.round(nameX),Math.round(p.y-size-6));
  }});
- draws.sort((a,b)=>a.y-b.y);for(const d of draws)d.draw();
+ draws.sort((a,b)=>a.y-b.y||(a.layer||0)-(b.layer||0));for(const d of draws)d.draw();
  // A small marker keeps Tarin visible even where multiple canopies overlap.
  for(const tree of world.trees)if(tree.y>player.y&&Math.abs(tree.x-player.x)<30&&tree.y-player.y<72){ctx.fillStyle='#e8eacb';ctx.fillRect(Math.round(player.x)-1,Math.round(player.y)-25,3,3);}
  drawHugHearts();

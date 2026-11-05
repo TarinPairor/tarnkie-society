@@ -8,3 +8,7 @@ export function walkingSprite(actor, kind) {
   const stride = kind === 'tarin' ? 14 : 6;
   return `${kind}-walk-${Math.floor((actor.walkDistance || 0) / stride) % 2 + 1}`;
 }
+
+// Tarin's supplied artwork faces left; the other sprites use a right-facing base.
+// actor.flip records intended leftward facing, independently of source artwork.
+export function spriteFlip(actor,kind){return kind==='tarin'?!actor.flip:!!actor.flip;}

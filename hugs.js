@@ -26,15 +26,21 @@ export class Hugs {
   this.requests.delete(id);const a=this.player(r.from),b=this.player(r.to),now=this.room.now();
   if(r.expiresAt<=now||!a||!b||!closeEnough(this.room.world,a,b))throw new Error('The hug expired or the other player moved away.');
   if(!accept){this.notice(a.id,`${b.name} declined the hug.`);return;}
-  // Bring the accepted pair together only when both destinations are walkable.
-  const middle={x:(a.x+b.x)/2,y:(a.y+b.y)/2},distance=Math.hypot(b.x-a.x,b.y-a.y);
-  const directions=[[1,0],distance?[(b.x-a.x)/distance,(b.y-a.y)/distance]:[1,0]];
-  for(const [dx,dy] of directions){const first={x:middle.x-dx*10,y:middle.y-dy*10},second={x:middle.x+dx*10,y:middle.y+dy*10};
-   if(canStand(this.room.world,first.x,first.y,7)&&canStand(this.room.world,second.x,second.y,7)){Object.assign(a,first);Object.assign(b,second);break;}
+  // Use the same composition regardless of who initiated the request.
+  const left=a.kind==='tarin'&&b.kind==='amy'?b:a,right=left===a?b:a;
+  const middle={x:(a.x+b.x)/2,y:(a.y+b.y)/2};let placement=null;
+  for(const center of [middle,{x:a.x,y:a.y},{x:b.x,y:b.y}]){
+   for(const [dx,dy] of [[0,0],[-8,0],[8,0],[0,-8],[0,8],[-8,-8],[8,-8],[-8,8],[8,8]]){
+    const first={x:center.x+dx-3,y:center.y+dy},second={x:center.x+dx+3,y:center.y+dy};
+    if(canStand(this.room.world,first.x,first.y,7)&&canStand(this.room.world,second.x,second.y,7)){placement={first,second};break;}
+   }
+   if(placement)break;
   }
+  if(!placement)throw new Error('Move to a little more open space to hug.');
+  Object.assign(left,placement.first);Object.assign(right,placement.second);
   const hug={id:randomUUID(),players:[a.id,b.id],startedAt:now,endsAt:now+HUG_DURATION};this.active.set(hug.id,hug);
   for(const p of [a,b]){p.hugId=hug.id;p.walking=false;p.walkDistance=0;p.input={x:0,y:0,run:false};}
-  a.flip=a.x>b.x;b.flip=b.x>=a.x;
+  left.flip=false;right.flip=true;
   return hug;
  }
  finish(hug){for(const id of hug.players){const p=this.player(id);if(p){p.hugId=null;p.input={x:0,y:0,run:false};}}this.active.delete(hug.id);}

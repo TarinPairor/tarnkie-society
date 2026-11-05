@@ -52,5 +52,17 @@ test('bundled hug poses match Tarin’s supplied sprite and Amy’s authored pix
   const source=JSON.parse(readFileSync(new URL(`../../retro-png-maker/exports/my-chars/${prefix}-hug-${size}x${size}.json`,import.meta.url)));
   const hug=actors[kind+'-hug'];assert.deepEqual(hug.pixels,source.pixels);assert.equal(hug.pixels.length,size*size);assert.notDeepEqual(hug.pixels,actors[kind].pixels);
  }
- assert.deepEqual(actors['amy-hug'].pixels.slice(0,6*16),actors.amy.pixels.slice(0,6*16));
+ assert.equal(actors['amy-hug'].info.facing,'right');
+ assert.equal(actors['amy-hug'].pixels[8*16+14],'#edbd91');
+});
+
+test('Amy is left and Tarin is right with overlapping bodies regardless of requester or approach',()=>{
+ for(const requester of ['tarin','amy'])for(const reversed of [false,true]){
+  const {room,a,b}=setup();if(reversed){a.x+=24;b.x-=8;}
+  const sender=requester==='tarin'?a:b,recipient=sender===a?b:a;
+  const request=room.hugs.request(sender,recipient.id);room.hugs.respond(recipient,request.id,true);
+  assert(b.x<a.x);assert.equal(a.x-b.x,6);assert.equal(a.y,b.y);
+  assert.equal(a.flip,true);assert.equal(b.flip,false);
+  assert(canStand(room.world,a.x,a.y,7));assert(canStand(room.world,b.x,b.y,7));
+ }
 });
