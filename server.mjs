@@ -1,0 +1,58 @@
+import http from 'node:http';
+import {readFile} from 'node:fs/promises';
+import {readFileSync} from 'node:fs';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import path from 'node:path';
+import {WebSocketServer,WebSocket} from 'ws';
+import {ForestRoom} from './multiplayer.js';
+
+export function createGameServer(){
+ const root=fileURLToPath(new URL('.',import.meta.url));
+ const collection=JSON.parse(readFileSync(new URL('./assets/collection.json',import.meta.url)));
+ const room=new ForestRoom(collection.filter(o=>['People','Creatures','Monsters'].includes(o.category)));
+ const server=http.createServer(async(req,res)=>{try{
+  const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
+  const file=path.resolve(root,'.'+(pathname.endsWith('/')?pathname+'index.html':pathname));
+  if(!file.startsWith(root)||pathname.includes('/node_modules/')||!['.html','.css','.js','.json','.png','.svg'].includes(path.extname(file))){res.writeHead(404);return res.end('Not found');}
+  const data=await readFile(file);res.setHeader('Cache-Control','no-cache');res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.svg':'image/svg+xml'})[path.extname(file)]);res.end(data);
+ }catch{res.writeHead(404);res.end('Not found');}});
+ const wss=new WebSocketServer({noServer:true,maxPayload:4096});
+ const send=(ws,message)=>{if(ws.readyState===WebSocket.OPEN&&ws.bufferedAmount<1024*1024)ws.send(JSON.stringify(message));};
+ const broadcast=()=>{const state=room.snapshot();for(const ws of wss.clients)if(ws.player)send(ws,state);};
+ server.on('upgrade',(req,socket,head)=>{
+  let sameOrigin=true;try{if(req.headers.origin)sameOrigin=new URL(req.headers.origin).host===req.headers.host;}catch{sameOrigin=false;}
+  if(req.url!=='/ws'||!sameOrigin||wss.clients.size>=64){socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');socket.destroy();return;}
+  wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));
+ });
+ wss.on('connection',ws=>{
+  ws.alive=true;ws.rateAt=Date.now();ws.rate=0;ws.on('pong',()=>ws.alive=true);ws.on('error',()=>{});
+  const joinTimeout=setTimeout(()=>{if(!ws.player)ws.close(1008,'Join required');},15000);joinTimeout.unref();
+  ws.on('message',data=>{try{
+   if(Date.now()-ws.rateAt>=1000){ws.rateAt=Date.now();ws.rate=0;}if(++ws.rate>100){ws.close(1008,'Too many messages');return;}
+   const m=JSON.parse(data.toString());if(!m||typeof m!=='object')return;
+   if(m.type==='join'&&!ws.player){ws.player=room.join(m,ws);clearTimeout(joinTimeout);send(ws,{type:'welcome',id:ws.player.id,token:ws.player.token});broadcast();}
+   else if(m.type==='input'&&ws.player)room.input(ws.player,m);
+   else if(m.type==='regenerate'&&ws.player){room.regenerate(ws.player,m.seed);broadcast();}
+   else if(m.type==='logout'){room.logout(ws.player);ws.player=null;ws.close(1000);broadcast();}
+  }catch(error){send(ws,{type:'error',message:error instanceof SyntaxError?'Invalid message.':error.message});}});
+  ws.on('close',()=>{clearTimeout(joinTimeout);room.leave(ws.player);broadcast();});
+ });
+ let ticks=0,last=Date.now();
+ const timer=setInterval(()=>{const now=Date.now();room.tick((now-last)/1000);last=now;if(++ticks%2===0)broadcast();},50);
+ const heartbeat=setInterval(()=>{for(const ws of wss.clients){if(!ws.alive){ws.terminate();continue;}ws.alive=false;ws.ping();}},10000);
+ const shutdown=()=>{clearInterval(timer);clearInterval(heartbeat);for(const ws of wss.clients)ws.terminate();wss.close();};
+ server.on('close',shutdown);
+ return {server,room,wss,shutdown};
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href){
+ const args=process.argv.slice(2),index=args.indexOf('--port'),port=index>=0?Number(args[index+1]):Number(process.env.PORT)||5174;
+ const {server,shutdown}=createGameServer();let listeningPort=port;
+ server.on('error',error=>{
+  if(error.code==='EADDRINUSE'&&listeningPort<port+10){
+   console.log(`Port ${listeningPort} is already in use. Trying ${listeningPort+1} for multiplayer…`);
+   listeningPort++;server.listen(listeningPort,'0.0.0.0');
+  }else{console.error(`Could not start multiplayer: ${error.message}`);shutdown();process.exitCode=1;}
+ });
+ server.on('listening',()=>console.log(`Forest multiplayer is ready. Open http://localhost:${listeningPort}/ (use this address, not any Python server).`));
+ server.listen(listeningPort,'0.0.0.0');
+}

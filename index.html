@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#152d25">
+  <title>Forest</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="game-frame" aria-label="Forest exploration game">
+    <canvas id="game" tabindex="0" aria-label="Explore as Tarin. WASD or arrows to walk, Shift to run. Open the menu for controls."></canvas>
+    <div id="loading" role="status">Loading…</div>
+    <section id="login" hidden aria-label="Join the forest">
+      <form id="join-form" class="join-card">
+        <h1>Join the forest</h1>
+        <label for="player-name">Your name</label><input id="player-name" maxlength="24" required autocomplete="nickname" placeholder="Enter a name">
+        <fieldset><legend>Play as</legend><div class="character-options">
+          <label><input type="radio" name="character" value="tarin" checked><canvas id="choose-tarin" width="80" height="80" aria-hidden="true"></canvas><span>Tarin</span></label>
+          <label><input type="radio" name="character" value="amy"><canvas id="choose-amy" width="80" height="80" aria-hidden="true"></canvas><span>Amy</span></label>
+        </div></fieldset>
+        <p id="join-error" role="alert" hidden></p><button id="join-button" type="submit">Enter forest</button>
+        <p class="join-note">A name is all you need. Open another browser to play together.</p>
+      </form>
+    </section>
+    <div id="connection-status" role="status" hidden></div>
+    <details id="menu" class="game-menu">
+      <summary aria-label="Toggle game menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Menu</summary>
+      <div class="menu-content">
+        <h1>Controls</h1><div class="session-info"><span id="session-name"></span><span id="player-count"></span><p id="online-list"></p><button id="logout">Leave / change character</button></div>
+        <dl class="controls-list">
+          <div><dt>Walk</dt><dd><kbd>WASD</kbd> / <kbd>↑ ↓ ← →</kbd></dd></div>
+          <div><dt>Run</dt><dd><kbd>Shift</kbd></dd></div>
+          <div><dt>Pause</dt><dd><kbd>P</kbd></dd></div>
+          <div><dt>Map</dt><dd><kbd>M</kbd></dd></div>
+          <div><dt>Close menu</dt><dd><kbd>Esc</kbd></dd></div>
+        </dl>
+        <div class="menu-actions"><button id="pause" aria-pressed="false">Pause <kbd>P</kbd></button><button id="show-map" aria-pressed="false">Show map <kbd>M</kbd></button></div>
+        <form id="seed-form">
+          <label for="seed">Shared forest seed</label><p id="seed-note">The first connected player can change the forest for everyone.</p>
+          <input id="seed" value="TARIN-01" maxlength="48" autocomplete="off" spellcheck="false">
+          <div><button id="seed-submit" type="submit">Regenerate</button><button id="random-seed" type="button">Random forest</button></div>
+        </form>
+        <div class="world-details"><span id="location-name">Fernwood</span><span id="coordinates">72, 73</span><span id="world-info"></span></div>
+      </div>
+    </details>
+    <div class="map-panel" id="map-panel" hidden>
+      <button id="toggle-map" aria-label="Hide minimap">×</button>
+      <canvas id="map" width="144" height="144" aria-label="Forest minimap. Your position is marked in cream."></canvas>
+    </div>
+    <div id="paused" hidden><strong>Paused</strong><button id="resume">Resume</button></div>
+    <div class="touch-controls" aria-label="Movement controls">
+      <button data-key="w" aria-label="Walk up">↑</button><button data-key="a" aria-label="Walk left">←</button><button data-key="s" aria-label="Walk down">↓</button><button data-key="d" aria-label="Walk right">→</button>
+    </div>
+  </main>
+  <script type="module" src="./game.js"></script>
+</body>
+</html>
