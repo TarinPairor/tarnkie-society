@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#152d25">
   <title>Forest</title>
   <link rel="stylesheet" href="./style.css">
@@ -34,7 +34,7 @@
           <div><dt>Pause</dt><dd><kbd>P</kbd></dd></div>
           <div><dt>Map</dt><dd><kbd>M</kbd></dd></div>
           <div><dt>Close menu</dt><dd><kbd>Esc</kbd></dd></div>
-        </dl>
+        </dl><p class="touch-help">On a phone: drag the joystick to walk. Hold Sprint with your other thumb to run.</p>
         <div class="menu-actions"><button id="pause" aria-pressed="false">Pause <kbd>P</kbd></button><button id="show-map" aria-pressed="false">Show map <kbd>M</kbd></button></div>
         <form id="seed-form">
           <label for="seed">Shared forest seed</label><p id="seed-note">The first connected player can change the forest for everyone.</p>
@@ -49,8 +49,13 @@
       <canvas id="map" width="144" height="144" aria-label="Forest minimap. Your position is marked in cream."></canvas>
     </div>
     <div id="paused" hidden><strong>Paused</strong><button id="resume">Resume</button></div>
-    <div class="touch-controls" aria-label="Movement controls">
-      <button data-key="w" aria-label="Walk up">↑</button><button data-key="a" aria-label="Walk left">←</button><button data-key="s" aria-label="Walk down">↓</button><button data-key="d" aria-label="Walk right">→</button>
+    <div class="touch-controls" aria-label="Touch movement controls">
+      <div id="joystick" class="joystick" role="group" aria-label="Movement joystick. Drag to walk in any direction.">
+        <span class="joystick-ring" aria-hidden="true"></span><span id="joystick-thumb" class="joystick-thumb" aria-hidden="true"></span>
+      </div>
+      <button id="sprint" class="sprint-button" type="button" aria-label="Hold to sprint" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="15" cy="4" r="2"/><path d="m12 8 4 3 4 1M7 10l5-2-2 6 4 3v4m-4-7-3 4H3"/></svg><span>Sprint</span>
+      </button>
     </div>
   </main>
   <script type="module" src="./game.js"></script>

@@ -1,3 +1,4 @@
+import {createTouchControls} from './touch.js';
 import {ForestConnection} from './network.js';
 import {walkingSprite} from './animation.js';
 import {TILE,SIZE,makeWorld,makeCreatures,randomFromSeed} from './world.js';
@@ -5,11 +6,12 @@ const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d
 const keys=new Set(),sprites=new Map(),treeSprites=[],grassSprites=[];
 let world,creatures=[],player,collection=[],camera={x:0,y:0},paused=false,ready=false,time=0,previous=0,viewWidth=800,viewHeight=500,mapVisible=false;
 let menuOpen=false,connection=null,joined=false,localId=null,revision=null,remotePlayers=[];
-let selectedCharacter='tarin',savedProfile=null;
+let selectedCharacter='tarin',savedProfile=null,touchControls=null;
+function clearInput(){keys.clear();touchControls?.reset();}
 try{savedProfile=JSON.parse(sessionStorage.getItem('forest-profile'));}catch{}
 const menu=$('#menu');
-menu.addEventListener('toggle',()=>{menuOpen=menu.open;keys.clear();if(player)player.walking=false;if(!menuOpen)canvas.focus();});
-function closeMenu(){menu.open=false;menuOpen=false;keys.clear();canvas.focus();}
+menu.addEventListener('toggle',()=>{menuOpen=menu.open;clearInput();if(player)player.walking=false;if(!menuOpen)canvas.focus();});
+function closeMenu(){menu.open=false;menuOpen=false;clearInput();canvas.focus();}
 const zoom=1.6,reducedMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
 function surface(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;return c;}
 function sprite(data){const c=surface(data.width,data.height),cctx=c.getContext('2d');data.pixels.forEach((color,i)=>{if(color){cctx.fillStyle=color;cctx.fillRect(i%data.width,Math.floor(i/data.width),1,1);}});return c;}
@@ -45,11 +47,11 @@ function generate(seed){
  }
  for(const v of world.settlements){mapBackgroundCtx.fillStyle='#ebce91';mapBackgroundCtx.fillRect(v.x-1,v.y-1,3,3);}
  $('#world-info').textContent=`${creatures.length} wanderers · 15 cottages · 144 × 144 tiles`;
- keys.clear();$('#seed').value=seed;try{history.replaceState(null,'',`#${encodeURIComponent(seed)}`);}catch{}
+ clearInput();$('#seed').value=seed;try{history.replaceState(null,'',`#${encodeURIComponent(seed)}`);}catch{}
 }
 function resize(){const r=canvas.getBoundingClientRect();canvas.width=Math.max(1,Math.round(r.width));canvas.height=Math.max(1,Math.round(r.height));viewWidth=canvas.width/zoom;viewHeight=canvas.height/zoom;ctx.imageSmoothingEnabled=false;}
 new ResizeObserver(resize).observe(canvas);
-function setPaused(value){paused=value;keys.clear();$('#paused').hidden=!value;$('#pause').setAttribute('aria-pressed',String(value));$('#pause').innerHTML=`${value?'Resume':'Pause'} <kbd>P</kbd>`;}
+function setPaused(value){paused=value;clearInput();$('#paused').hidden=!value;$('#pause').setAttribute('aria-pressed',String(value));$('#pause').innerHTML=`${value?'Resume':'Pause'} <kbd>P</kbd>`;}
 $('#pause').onclick=()=>{if(ready){setPaused(!paused);if(paused)closeMenu();}};$('#resume').onclick=()=>{setPaused(false);closeMenu();};
 function toggleMap(){mapVisible=!mapVisible;$('#map-panel').hidden=!mapVisible;$('#show-map').innerHTML=`${mapVisible?'Hide':'Show'} map <kbd>M</kbd>`;$('#show-map').setAttribute('aria-pressed',String(mapVisible));}
 $('#toggle-map').onclick=toggleMap;$('#show-map').onclick=toggleMap;
@@ -66,13 +68,15 @@ window.addEventListener('keydown',e=>{
 window.addEventListener('keyup',e=>{if(typeof e.key==='string')keys.delete(e.key.toLowerCase());});window.addEventListener('blur',()=>{if(ready)setPaused(true);});document.addEventListener('visibilitychange',()=>{if(document.hidden&&ready)setPaused(true);});
 canvas.addEventListener('pointerdown',closeMenu);
 $('#seed').addEventListener('focus',()=>keys.clear());
-document.querySelectorAll('[data-key]').forEach(button=>{
- button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);if(joined&&!paused&&!menuOpen)keys.add(button.dataset.key);});
- for(const event of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(event,()=>keys.delete(button.dataset.key));
-});
+touchControls=createTouchControls({joystick:$('#joystick'),thumb:$('#joystick-thumb'),sprint:$('#sprint'),enabled:()=>joined&&connection?.welcomed&&!paused&&!menuOpen});
+window.addEventListener('resize',clearInput);
+window.addEventListener('orientationchange',clearInput);
+
 function update(dt){
  const enabled=joined&&connection?.welcomed&&!paused&&!menuOpen;
- connection?.sendInput({x:enabled?((keys.has('d')||keys.has('arrowright')?1:0)-(keys.has('a')||keys.has('arrowleft')?1:0)):0,y:enabled?((keys.has('s')||keys.has('arrowdown')?1:0)-(keys.has('w')||keys.has('arrowup')?1:0)):0,run:enabled&&keys.has('shift')});
+ const touch=touchControls.input(),keyboardX=(keys.has('d')||keys.has('arrowright')?1:0)-(keys.has('a')||keys.has('arrowleft')?1:0),keyboardY=(keys.has('s')||keys.has('arrowdown')?1:0)-(keys.has('w')||keys.has('arrowup')?1:0);
+ const keyboardMoving=keyboardX!==0||keyboardY!==0;
+ connection?.sendInput({x:enabled?(keyboardMoving?keyboardX:touch.x):0,y:enabled?(keyboardMoving?keyboardY:touch.y):0,run:enabled&&(keys.has('shift')||touch.run)});
  const blend=1-Math.exp(-dt*22);
  for(const actor of [player,...remotePlayers,...creatures]){if(actor.targetX!==undefined){actor.x+=(actor.targetX-actor.x)*blend;actor.y+=(actor.targetY-actor.y)*blend;}}
  const smoothing=reducedMotion?1:1-Math.exp(-dt*9);camera.x+=(player.x-camera.x)*smoothing;camera.y+=(player.y-camera.y)*smoothing;
@@ -151,7 +155,7 @@ async function start(){
 function showError(message){$('#join-error').textContent=message;$('#join-error').hidden=false;$('#join-button').disabled=false;if(joined){$('#connection-status').textContent=message;$('#connection-status').hidden=false;}}
 connection=new ForestConnection({url:`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/ws`,onState:receiveState,
  onWelcome(message){savedProfile={name:$('#player-name').value.trim(),character:selectedCharacter,token:message.token};try{sessionStorage.setItem('forest-profile',JSON.stringify(savedProfile));}catch{}localId=message.id;joined=true;revision=null;$('#login').hidden=true;canvas.setAttribute('aria-label',`Explore as ${selectedCharacter==='amy'?'Amy':'Tarin'}. WASD or arrows to walk, Shift to run. Open the menu for controls.`);$('#join-button').disabled=false;$('#session-name').textContent=`${$('#player-name').value.trim()} · ${selectedCharacter==='amy'?'Amy':'Tarin'}`;setPaused(false);closeMenu();},
- onStatus(status){$('#connection-status').textContent=status;$('#connection-status').hidden=status==='Connected';if(status!=='Connected'){keys.clear();if(player)player.walking=false;for(const a of remotePlayers)a.walking=false;}},onError:showError});
+ onStatus(status){$('#connection-status').textContent=status;$('#connection-status').hidden=status==='Connected';if(status!=='Connected'){clearInput();if(player)player.walking=false;for(const a of remotePlayers)a.walking=false;}},onError:showError});
 $('#join-form').addEventListener('submit',e=>{e.preventDefault();if(!ready)return;const name=$('#player-name').value.trim();if(!name||name.length>24){showError('Enter a name from 1 to 24 characters.');return;}selectedCharacter=$('input[name="character"]:checked').value;$('#join-error').hidden=true;$('#join-button').disabled=true;connection.connect({name,character:selectedCharacter,token:savedProfile?.name===name&&savedProfile?.character===selectedCharacter?savedProfile.token:undefined});});
-$('#logout').onclick=()=>{connection.disconnect();savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}joined=false;localId=null;remotePlayers=[];keys.clear();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=true;$('#player-name').focus();};
+$('#logout').onclick=()=>{connection.disconnect();savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}joined=false;localId=null;remotePlayers=[];clearInput();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=true;$('#player-name').focus();};
 start();

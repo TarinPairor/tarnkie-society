@@ -20,7 +20,7 @@ The game fills the window. The top-left Menu contains controls, the connected-pl
 - P: pause your movement
 - M: toggle the minimap
 - Escape / click the world: close the menu
-- Touch devices: directional controls
+- Touch devices: drag the left thumb joystick to move; hold the right Sprint button to run. Joystick deflection controls walking speed, and both touches work together. Controls reset on touch cancellation, menu, pause, disconnect, and screen rotation.
 
 Opening the menu, pausing, or switching windows stops your character. Other players and creatures continue moving. Leave / change character returns to the join screen.
 

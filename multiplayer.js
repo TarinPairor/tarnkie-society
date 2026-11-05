@@ -30,7 +30,7 @@ export class ForestRoom {
   for(const p of this.sessions.values()){
    if(!p.connection){if(this.now()-p.disconnectedAt>15000)this.sessions.delete(p.token);continue;}
    const input=this.now()-p.inputAt>300?{x:0,y:0,run:false}:p.input,length=Math.hypot(input.x,input.y),speed=input.run?170:100,x=p.x,y=p.y;
-   p.walking=length>0&&moveActor(this.world,p,input.x/length*speed*dt,input.y/length*speed*dt);if(input.x)p.flip=input.x<0;
+   p.walking=length>0&&moveActor(this.world,p,input.x/Math.max(1,length)*speed*dt,input.y/Math.max(1,length)*speed*dt);if(input.x)p.flip=input.x<0;
    advanceWalk(p,Math.hypot(p.x-x,p.y-y));
   }
   for(const a of this.creatures){const x=a.x,y=a.y;updateCreature(this.world,a,dt);advanceWalk(a,Math.hypot(a.x-x,a.y-y));}

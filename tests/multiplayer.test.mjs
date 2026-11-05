@@ -73,3 +73,10 @@ test('WebSocket login rejects an occupied name and can retry with a different na
  b.connect({name:'Same name',character:'amy'});await waitFor(()=>error);assert.match(error,/already/);assert.equal(otherReady,false);
  b.connect({name:'New name',character:'amy'});await waitFor(()=>otherReady);assert.equal(game.room.snapshot().players.length,2);
 });
+
+test('server honors analog joystick strength and keeps keyboard diagonal speed bounded',()=>{
+ const room=new ForestRoom(types),a=join(room,'Full'),b=join(room,'Gentle'),c=join(room,'Diagonal');
+ const initial=room.world.spawn;room.input(a,{x:0,y:1});room.input(b,{x:0,y:.25});room.input(c,{x:1,y:1});room.tick(.05);
+ const full=a.y-initial.y,gentle=b.y-initial.y,diagonal=Math.hypot(c.x-initial.x,c.y-initial.y);
+ assert(Math.abs(gentle/full-.25)<1e-8);assert(Math.abs(diagonal-full)<1e-8);
+});
