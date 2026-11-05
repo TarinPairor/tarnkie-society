@@ -30,8 +30,8 @@ export function createGameServer(){
   ws.on('message',data=>{let context;try{
    if(Date.now()-ws.rateAt>=1000){ws.rateAt=Date.now();ws.rate=0;}if(++ws.rate>100){ws.close(1008,'Too many messages');return;}
    const m=JSON.parse(data.toString());context=m?.type;if(!m||typeof m!=='object')return;
-   if(m.type==='join'&&!ws.player){ws.player=room.join(m,ws);clearTimeout(joinTimeout);send(ws,{type:'welcome',id:ws.player.id,token:ws.player.token});broadcast();}
-   else if(m.type==='chat'&&ws.player){room.chat(ws.player,m.text);broadcast();}
+   if(m.type==='join'&&!ws.player){ws.player=room.join(m,ws);clearTimeout(joinTimeout);send(ws,{type:'welcome',id:ws.player.id,token:ws.player.token,chatHistory:room.chatHistory});broadcast();}
+   else if(m.type==='chat'&&ws.player){room.chat(ws.player,m.text);const message=room.chatHistory.at(-1);for(const client of wss.clients)if(client.player)send(client,{type:'chat-message',message});broadcast();}
    else if(m.type==='hug-request'&&ws.player){room.hugs.request(ws.player,m.targetId);broadcast();}
    else if(m.type==='hug-response'&&ws.player){room.hugs.respond(ws.player,m.requestId,m.accept);broadcast();}
    else if(m.type==='input'&&ws.player)room.input(ws.player,m);

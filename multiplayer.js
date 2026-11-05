@@ -1,4 +1,4 @@
-import {cleanChat,CHAT_DURATION,CHAT_COOLDOWN} from './chat.js';
+import {cleanChat,CHAT_DURATION,CHAT_COOLDOWN,CHAT_HISTORY_LIMIT} from './chat.js';
 import {Hugs} from './hugs.js';
 import {randomUUID} from 'node:crypto';
 import {makeWorld,makeCreatures,moveActor,updateCreature} from './world.js';
@@ -6,7 +6,7 @@ import {advanceWalk} from './animation.js';
 
 export class ForestRoom {
  constructor(types,{seed='TARIN-01',now=()=>Date.now()}={}){
-  this.types=types;this.now=now;this.sessions=new Map();this.sequence=0;this.hugs=new Hugs(this);this.reset(seed);
+  this.types=types;this.now=now;this.sessions=new Map();this.sequence=0;this.chatHistory=[];this.hugs=new Hugs(this);this.reset(seed);
  }
  reset(seed){this.hugs.reset();this.world=makeWorld(seed);this.creatures=makeCreatures(this.world,this.types);this.sequence++;
   for(const p of this.sessions.values()){Object.assign(p,this.world.spawn,{walking:false,walkDistance:0,input:{x:0,y:0,run:false},chat:null});}
@@ -32,7 +32,9 @@ export class ForestRoom {
   if(!p?.connection||this.sessions.get(p.token)!==p)throw new Error('Join the forest before sending a message.');
   const message=cleanChat(text),now=this.now();
   if(now-(p.lastChatAt??-Infinity)<CHAT_COOLDOWN)throw new Error('Wait a moment before sending another message.');
-  p.lastChatAt=now;p.chat={id:randomUUID(),text:message,expiresAt:now+CHAT_DURATION};return p.chat;
+  p.lastChatAt=now;p.chat={id:randomUUID(),text:message,expiresAt:now+CHAT_DURATION};
+  this.chatHistory.push({id:p.chat.id,playerId:p.id,name:p.name,kind:p.kind,text:message,sentAt:now});if(this.chatHistory.length>CHAT_HISTORY_LIMIT)this.chatHistory.shift();
+  return p.chat;
  }
  regenerate(p,seed){if(p?.id!==this.hostId())throw new Error('Only the first connected player can change the forest.');if(typeof seed!=='string'||!seed.trim()||seed.length>48)throw new Error('Enter a forest seed from 1 to 48 characters.');this.reset(seed.trim());}
  tick(dt){this.hugs.clean();dt=Math.min(.1,Math.max(0,dt));

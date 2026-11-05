@@ -1,5 +1,5 @@
 export class ForestConnection {
- constructor({url,onState,onWelcome,onStatus,onError,WebSocketClass=globalThis.WebSocket}){Object.assign(this,{url,onState,onWelcome,onStatus,onError,WebSocketClass});this.socket=null;this.wantsConnection=false;this.retry=0;this.profile=null;this.token=null;this.welcomed=false;}
+ constructor({url,onState,onWelcome,onStatus,onError,onChat,WebSocketClass=globalThis.WebSocket}){Object.assign(this,{url,onState,onWelcome,onStatus,onError,onChat,WebSocketClass});this.socket=null;this.wantsConnection=false;this.retry=0;this.profile=null;this.token=null;this.welcomed=false;}
  connect(profile){this.disconnect();this.profile=profile;this.token=profile.token||null;this.wantsConnection=true;this.open();}
  open(){
   if(!this.wantsConnection)return;
@@ -9,6 +9,7 @@ export class ForestConnection {
   ws.onopen=()=>{if(ws!==this.socket)return;ws.send(JSON.stringify({type:'join',...this.profile,token:this.token}));};
   ws.onmessage=event=>{if(ws!==this.socket)return;let m;try{m=JSON.parse(event.data);}catch{return;}
    if(m.type==='welcome'){this.token=m.token;this.welcomed=true;this.retry=0;this.lastInput=null;this.onWelcome(m);this.onStatus('Connected');}
+   else if(m.type==='chat-message'&&this.welcomed)this.onChat?.(m.message);
    else if(m.type==='state'&&this.welcomed)this.onState(m);
    else if(m.type==='error'){this.onError(m.message,m.context);if(!this.welcomed){this.wantsConnection=false;ws.close();}}
   };

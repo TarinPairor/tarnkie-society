@@ -7,7 +7,7 @@ import {advanceWalk,walkingSprite,spriteFlip} from '../animation.js';
 import {ForestConnection} from '../network.js';
 import {createTouchControls} from '../touch.js';
 import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees} from '../trees.js';
-import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat} from '../chat.js';
+import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory} from '../chat.js';
 import {HUG_RANGE,HUG_DURATION} from '../hug-config.js';
 const {SIZE,TILE,makeWorld,canStand,moveActor,makeCreatures,updateCreature,randomFromSeed}=engine;
 const collection=JSON.parse(readFileSync(new URL('../assets/collection.json',import.meta.url)));
@@ -50,9 +50,9 @@ test('all creature types spawn and wander without combat or escaping the terrain
 test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and toggles map',async()=>{
  const elements=new Map();let frames=0;
  const context=new Proxy({measureText:()=>({width:24})},{get:(o,k)=>o[k]||(()=>{}),set:(o,k,v)=>(o[k]=v,true)});
- function element(selector){if(!elements.has(selector))elements.set(selector,{width:800,height:500,value:'TARIN-01',hidden:false,style:{},tagName:'CANVAS',handlers:{},classList:{add(){}},getContext:()=>context,getBoundingClientRect:()=>({width:1000,height:600}),setAttribute(){},appendChild(){},focus(){},setPointerCapture(){},addEventListener(n,fn){this.handlers[n]=fn;}});return elements.get(selector);}
+ function element(selector){if(!elements.has(selector))elements.set(selector,{width:800,height:500,value:'TARIN-01',hidden:false,style:{},tagName:'CANVAS',handlers:{},classList:{add(){}},getContext:()=>context,getBoundingClientRect:()=>({width:1000,height:600}),setAttribute(){},appendChild(){},replaceChildren(...children){this.children=children;},focus(){},setPointerCapture(){},addEventListener(n,fn){this.handlers[n]=fn;}});return elements.get(selector);}
  const windowEvents={};
- const sandbox={TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,HUG_RANGE,HUG_DURATION,...engine,advanceWalk,walkingSprite,spriteFlip,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
+ const sandbox={TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory,HUG_RANGE,HUG_DURATION,...engine,advanceWalk,walkingSprite,spriteFlip,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
  vm.createContext(sandbox);
  const code=readFileSync(new URL('../game.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/start\(\);\s*$/,'globalThis.started=start();');
  vm.runInContext(code,sandbox);await sandbox.started;
@@ -112,6 +112,23 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  vm.runInContext(`globalThis.realDateNow=Date.now;globalThis.noticeClock=1000;Date.now=()=>noticeClock;showError('A hug or request is already in progress.','hug-request');updateChatUI();`,sandbox);
  assert.equal(element('#hug-notice').hidden,false);assert.equal(element('#connection-status').hidden,true);assert.equal(element('#chat-toggle').hidden,false);
  vm.runInContext(`noticeClock+=2300;updateHugUI();Date.now=realDateNow;`,sandbox);assert.equal(element('#hug-notice').hidden,true);
+
+ vm.runInContext(`
+  globalThis.silhouetteDraws=[];player.walking=true;player.walkDistance=6;const originalDrawSprite=drawSprite;
+  drawSprite=(...args)=>silhouetteDraws.push({kind:args[0],alpha:ctx.globalAlpha});
+  drawLocalSilhouette(new Set(['other']));
+  drawLocalSilhouette(new Set([localId,'other']));
+  joined=false;drawLocalSilhouette(new Set([localId]));joined=true;
+  drawSprite=originalDrawSprite;
+ `,sandbox);
+ assert.equal(sandbox.silhouetteDraws.length,1);assert.equal(sandbox.silhouetteDraws[0].alpha,.42);assert.equal(sandbox.silhouetteDraws[0].kind,'amy-walk-2');
+
+ vm.runInContext(`addServerChat([{id:'feed-one',name:'Amy',text:'<b>Hello</b>'},{id:'feed-two',name:'Tarin',text:'Hi!'}]);`,sandbox);
+ assert.equal(element('#server-chat').hidden,false);assert.equal(element('#server-chat-messages').children.length,2);assert.equal(element('#server-chat-messages').children[0].textContent,'<Amy> <b>Hello</b>');
+ element('#show-server-chat').checked=false;element('#show-overhead-chat').checked=true;element('#show-server-chat').handlers.change();assert.equal(element('#server-chat').hidden,true);
+ vm.runInContext(`addServerChat([{id:'feed-three',name:'Amy',text:'Still here'}]);`,sandbox);assert.equal(element('#server-chat').hidden,true);
+ element('#show-server-chat').checked=true;element('#show-overhead-chat').checked=false;element('#show-overhead-chat').handlers.change();assert.equal(element('#server-chat').hidden,false);assert.equal(element('#server-chat-messages').children.length,3);
+ vm.runInContext('globalThis.bubblesEnabled=chatSettings.bubbles',sandbox);assert.equal(sandbox.bubblesEnabled,false);
  assert(readFileSync(new URL('../assets/tarin.json',import.meta.url),'utf8').includes('tarin-front'));
 });
 

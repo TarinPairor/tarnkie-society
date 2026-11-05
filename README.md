@@ -47,7 +47,7 @@ Tarin uses `tarin-hug-40x40.json`; Amy uses a newly authored `Amy-hug-16x16.json
 
 Tap the speech-bubble icon in the top-right corner, or press **Enter** / **C**, to open chat. Type up to 140 characters and press Enter/Send, or click a quick message such as “Hi!”, “Follow me!”, or “Want a hug?”. Escape or the close button returns to the game. Movement and touch controls stop while the composer is open.
 
-Messages appear in wrapping speech bubbles above the sender for six seconds and synchronize over WebSockets. Each player's newest message replaces their previous bubble; there is no persistent chat history. The server validates messages and applies an 800 ms cooldown per sender. Speech clears on disconnect or world regeneration. Quick messages and typed messages share the same delivery behavior.
+Messages appear in wrapping speech bubbles above the sender for six seconds and synchronize over WebSockets. Each player's newest message replaces their previous bubble. The server also retains the latest 50 messages in memory for the corner feed; no chat is saved to a database. The server validates messages and applies an 800 ms cooldown per sender. Speech clears on disconnect or world regeneration. Quick messages and typed messages share the same delivery behavior.
 
 Hug composition places Amy on the left and Tarin on the right at the same baseline, six world pixels apart, independent of who requests. Amy has a right-facing profile hug pose; Tarin uses the supplied left-facing pose. Drawing order is consistent on both clients so the bodies overlap during the embrace.
 
@@ -55,6 +55,12 @@ Creature density is intentionally sparse: two of each normal creature and one of
 
 ## Tree cover and transient notices
 
-Trees have opaque 68×90 scaled canopies, about 17% larger than before, and a 10×8 world-pixel trunk collision footprint instead of blocking an entire 32×32 tile. Players can step under foliage, and foreground trees hide sprites naturally. There is no player reveal marker or automatic canopy transparency. Concealed players' name tags, speech bubbles, and nearby hug actions are suppressed so those overlays do not expose their hiding position. This is visual cover; the minimap continues to show only your own position.
+Trees have opaque 68×90 scaled canopies, about 17% larger than before, and a 10×8 world-pixel trunk collision footprint instead of blocking an entire 32×32 tile. Players can step under foliage, and foreground trees hide sprites naturally. Canopies stay opaque. Only your own client draws your concealed character at 42% opacity over the tree so you can track yourself; other players receive no silhouette overlay for you. Concealed players' name tags, speech bubbles, and nearby hug actions are suppressed so those overlays do not expose their hiding position. This is visual cover; the minimap continues to show only your own position.
 
 Outgoing hug confirmations and action errors flash briefly, fade, and disappear after 2.2 seconds of real time. They never intercept taps and no longer occupy the connection-status banner. The recipient's interactive Accept/Deny prompt still lasts until the request expires or is resolved.
+
+## Chat display settings
+
+Menu → **Chat display** has independent **Above-head messages** and **Live server chat** toggles. Both start enabled and preferences are saved per browser, so each player can keep either, both, or neither display visible. Toggling display never changes message delivery.
+
+The Minecraft-style corner feed shows `<Name> message`, retains up to 50 messages, scrolls through earlier lines, and sits above the joystick on phones. Hidden feeds continue receiving messages. Rejoining/reconnecting loads the server's recent history without duplicates; messages from players who leave remain in the feed. Forest regeneration preserves the feed; a server restart clears it. Quick messages and typed chat go to both displays, and the composer remains available with either display disabled.

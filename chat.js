@@ -1,4 +1,5 @@
 export const CHAT_LIMIT=140,CHAT_DURATION=6000,CHAT_COOLDOWN=800;
+export const CHAT_HISTORY_LIMIT=50;
 export const QUICK_MESSAGES=['Hi!','Follow me!','Wait for me!',"Let’s explore!",'Want a hug?','Thank you!','You’re cute!','See you!'];
 export function cleanChat(text){
  if(typeof text!=='string')throw new Error('Enter a message.');
@@ -12,4 +13,10 @@ export function wrapChat(text,measure,maxWidth){
  const lines=[];let line='';
  for(const character of text){if(line&&measure(line+character)>maxWidth){lines.push(line.trimEnd());line=character.trimStart();}else line+=character;}
  if(line)lines.push(line.trimEnd());return lines;
+}
+
+export function mergeChatHistory(current,incoming){
+ const messages=new Map(current.map(message=>[message.id,message]));
+ for(const message of incoming)if(message&&typeof message.id==='string'&&typeof message.name==='string'&&typeof message.text==='string')messages.set(message.id,message);
+ return [...messages.values()].slice(-CHAT_HISTORY_LIMIT);
 }

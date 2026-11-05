@@ -1,5 +1,5 @@
 import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees} from './trees.js';
-import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat} from './chat.js';
+import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory} from './chat.js';
 import {HUG_RANGE,HUG_DURATION} from './hug-config.js';
 import {createTouchControls} from './touch.js';
 import {ForestConnection} from './network.js';
@@ -10,6 +10,8 @@ const keys=new Set(),sprites=new Map(),treeSprites=[],grassSprites=[];
 let world,creatures=[],player,collection=[],camera={x:0,y:0},paused=false,ready=false,time=0,previous=0,viewWidth=800,viewHeight=500,mapVisible=false;
 let menuOpen=false,connection=null,joined=false,localId=null,revision=null,remotePlayers=[];
 let hugRequests=[],hugEffects=new Map(),currentHugRequest=null,hugTarget=null,lastHugNotice=null,noticeUntil=0,lastOutgoingHug=null;
+let serverChatMessages=[],chatSettings={bubbles:true,server:true};
+try{const saved=JSON.parse(localStorage.getItem('forest-chat-settings'));if(typeof saved?.bubbles==='boolean')chatSettings.bubbles=saved.bubbles;if(typeof saved?.server==='boolean')chatSettings.server=saved.server;}catch{}
 let chatOpen=false,pendingChat=null,lastChatIds=new Map();
 let selectedCharacter='tarin',savedProfile=null,touchControls=null;
 function clearInput(){keys.clear();touchControls?.reset();}
@@ -160,11 +162,20 @@ function render(){
   ctx.font='8px sans-serif';ctx.textAlign='center';const width=ctx.measureText(p.name||'').width+10;const nameX=p.x+(p.hugging?(p.flip?16:-16):0);ctx.fillStyle='#183127d9';ctx.fillRect(Math.round(nameX-width/2),Math.round(p.y-size-15),width,12);ctx.fillStyle='#f1ebcf';ctx.fillText(p.name||'',Math.round(nameX),Math.round(p.y-size-6));
  }});
  draws.sort((a,b)=>a.y-b.y||(a.layer||0)-(b.layer||0));for(const d of draws)d.draw();
+ drawLocalSilhouette(concealed);
  drawHugHearts();
  drawChatBubbles(concealed);
  ctx.setTransform(1,0,0,1,0,0);
  const nearest=world.settlements.find(v=>Math.hypot(player.x/TILE-v.x,player.y/TILE-v.y)<12);$('#location-name').textContent=nearest?.name||'Deep forest';$('#coordinates').textContent=`${Math.floor(player.x/TILE)}, ${Math.floor(player.y/TILE)}`;
  if(mapVisible){mapCtx.imageSmoothingEnabled=false;mapCtx.drawImage(mapBackground,0,0);mapCtx.strokeStyle='#edf3cda0';mapCtx.lineWidth=1;mapCtx.strokeRect(left/TILE,top/TILE,viewWidth/TILE,viewHeight/TILE);mapCtx.fillStyle='#f6edc8';mapCtx.fillRect(Math.floor(player.x/TILE)-1,Math.floor(player.y/TILE)-1,3,3);}
+}
+// This overlay exists only on the owning client; remote characters stay occluded.
+function drawLocalSilhouette(concealed){
+ if(!joined||player.id!==localId||!concealed.has(localId))return;
+ const kind=player.kind||selectedCharacter;
+ ctx.save();ctx.globalAlpha=.42;
+ drawSprite(walkingSprite(player,kind),player.x,player.y,kind==='amy'?32:43,spriteFlip(player,kind));
+ ctx.restore();
 }
 function showHugNotice(text){const notice=$('#hug-notice');notice.textContent=text;noticeUntil=Date.now()+2200;notice.hidden=false;if(!reducedMotion){notice.getAnimations?.().forEach(a=>a.cancel());notice.animate?.([{opacity:0,offset:0},{opacity:1,offset:.08},{opacity:1,offset:.75},{opacity:0,offset:1}],{duration:2200,fill:'both'});}}
 function offerHug(){if(hugRequests.some(r=>r.from===localId||r.to===localId)||!hugTarget||!joined||!connection?.welcomed||paused||menuOpen||chatOpen||player.hugging)return;connection.send({type:'hug-request',targetId:hugTarget.id});clearInput();}
@@ -194,6 +205,20 @@ function drawHugHearts(){
   }
  }
 }
+function renderServerChat(){
+ const feed=$('#server-chat'),nearBottom=feed.scrollHeight-feed.scrollTop-feed.clientHeight<30;
+ const rows=serverChatMessages.map(message=>{const row=document.createElement('p');row.textContent=`<${message.name}> ${message.text}`;return row;});
+ $('#server-chat-messages').replaceChildren(...rows);feed.hidden=!joined||!chatSettings.server||serverChatMessages.length===0;
+ if(nearBottom||!chatOpen)feed.scrollTop=feed.scrollHeight;
+}
+function addServerChat(messages){serverChatMessages=mergeChatHistory(serverChatMessages,messages);renderServerChat();}
+function saveChatSettings(){
+ chatSettings.bubbles=$('#show-overhead-chat').checked;chatSettings.server=$('#show-server-chat').checked;
+ try{localStorage.setItem('forest-chat-settings',JSON.stringify(chatSettings));}catch{}
+ renderServerChat();
+}
+$('#show-overhead-chat').checked=chatSettings.bubbles;$('#show-server-chat').checked=chatSettings.server;
+$('#show-overhead-chat').addEventListener('change',saveChatSettings);$('#show-server-chat').addEventListener('change',saveChatSettings);
 function setChatOpen(value){
  chatOpen=!!value&&joined&&!!connection?.welcomed;
  $('#chat-panel').hidden=!chatOpen;$('#chat-toggle').setAttribute('aria-expanded',String(chatOpen));
@@ -215,6 +240,7 @@ function updateChatUI(){
  if(pendingChat&&time-pendingChat.sentAt>5){pendingChat=null;$('#chat-feedback').textContent='Message not confirmed. Try sending again.';}
 }
 function drawChatBubbles(concealed=new Set()){
+ if(!chatSettings.bubbles)return;
  for(const p of [...remotePlayers,...(joined?[player]:[])]){
   if(concealed.has(p.id)||!p.chat||time>=p.chatUntil||!visible(p.x,p.y,100))continue;
   ctx.save();ctx.font='9px sans-serif';ctx.textAlign='left';ctx.textBaseline='top';
@@ -239,9 +265,9 @@ async function start(){
  }catch(error){$('#loading').textContent=`The forest could not load. Run npm install and npm run dev in the game folder, then open http://localhost:5174/. ${error.message}`;$('#loading').classList.add('error');}
 }
 function showError(message,context){if(context==='chat'){pendingChat=null;$('#chat-feedback').textContent=message;return;}if(joined){if(connection?.welcomed)$('#connection-status').hidden=true;showHugNotice(message);return;}$('#join-error').textContent=message;$('#join-error').hidden=false;$('#join-button').disabled=false;}
-connection=new ForestConnection({url:`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/ws`,onState:receiveState,
- onWelcome(message){savedProfile={name:$('#player-name').value.trim(),character:selectedCharacter,token:message.token};try{sessionStorage.setItem('forest-profile',JSON.stringify(savedProfile));}catch{}localId=message.id;joined=true;revision=null;$('#login').hidden=true;canvas.setAttribute('aria-label',`Explore as ${selectedCharacter==='amy'?'Amy':'Tarin'}. WASD or arrows to walk, Shift to run. Open the menu for controls.`);$('#join-button').disabled=false;$('#session-name').textContent=`${$('#player-name').value.trim()} · ${selectedCharacter==='amy'?'Amy':'Tarin'}`;setPaused(false);closeMenu();},
+connection=new ForestConnection({onChat:message=>addServerChat([message]),url:`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/ws`,onState:receiveState,
+ onWelcome(message){serverChatMessages=[];savedProfile={name:$('#player-name').value.trim(),character:selectedCharacter,token:message.token};try{sessionStorage.setItem('forest-profile',JSON.stringify(savedProfile));}catch{}localId=message.id;joined=true;addServerChat(message.chatHistory||[]);revision=null;$('#login').hidden=true;canvas.setAttribute('aria-label',`Explore as ${selectedCharacter==='amy'?'Amy':'Tarin'}. WASD or arrows to walk, Shift to run. Open the menu for controls.`);$('#join-button').disabled=false;$('#session-name').textContent=`${$('#player-name').value.trim()} · ${selectedCharacter==='amy'?'Amy':'Tarin'}`;setPaused(false);closeMenu();},
  onStatus(status){$('#connection-status').textContent=status;$('#connection-status').hidden=status==='Connected';if(status!=='Connected'){clearInput();if(player)player.walking=false;for(const a of remotePlayers)a.walking=false;}},onError:showError});
 $('#join-form').addEventListener('submit',e=>{e.preventDefault();if(!ready)return;const name=$('#player-name').value.trim();if(!name||name.length>24){showError('Enter a name from 1 to 24 characters.');return;}selectedCharacter=$('input[name="character"]:checked').value;$('#join-error').hidden=true;$('#join-button').disabled=true;connection.connect({name,character:selectedCharacter,token:savedProfile?.name===name&&savedProfile?.character===selectedCharacter?savedProfile.token:undefined});});
-$('#logout').onclick=()=>{connection.disconnect();savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}setChatOpen(false);pendingChat=null;lastChatIds.clear();joined=false;localId=null;remotePlayers=[];hugRequests=[];currentHugRequest=null;hugEffects.clear();$('#hug-prompt').hidden=true;$('#hug-action').hidden=true;clearInput();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=true;$('#player-name').focus();};
+$('#logout').onclick=()=>{connection.disconnect();savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}setChatOpen(false);pendingChat=null;lastChatIds.clear();joined=false;serverChatMessages=[];renderServerChat();localId=null;remotePlayers=[];hugRequests=[];currentHugRequest=null;hugEffects.clear();$('#hug-prompt').hidden=true;$('#hug-action').hidden=true;clearInput();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=true;$('#player-name').focus();};
 start();

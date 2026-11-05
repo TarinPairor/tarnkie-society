@@ -43,8 +43,8 @@ function transport(game,connections){return class extends WebSocket{
 function waitFor(predicate,timeout=2500){return new Promise((resolve,reject)=>{const started=Date.now();const timer=setInterval(()=>{if(predicate()){clearInterval(timer);resolve();}else if(Date.now()-started>timeout){clearInterval(timer);reject(new Error('Timed out waiting for WebSocket state'));}},10);});}
 
 test('two real WebSocket clients see character choice, movement, shared NPCs, regeneration, and logout',async t=>{
- const game=createGameServer(),streams=[],WebSocketClass=transport(game,streams),states={};let welcomeA,welcomeB;const errors=[];
- const options=who=>({url:'ws://localhost/ws',WebSocketClass,onState:s=>states[who]=s,onWelcome:m=>who==='a'?welcomeA=m:welcomeB=m,onStatus(){},onError:m=>errors.push(m)});
+ const game=createGameServer(),streams=[],WebSocketClass=transport(game,streams),states={};let welcomeA,welcomeB;const errors=[],chatEvents={a:[],b:[]};
+ const options=who=>({url:'ws://localhost/ws',WebSocketClass,onState:s=>states[who]=s,onWelcome:m=>who==='a'?welcomeA=m:welcomeB=m,onStatus(){},onChat:m=>chatEvents[who].push(m),onError:m=>errors.push(m)});
  const a=new ForestConnection(options('a')),b=new ForestConnection(options('b'));
  t.after(()=>{a.disconnect();b.disconnect();game.shutdown();for(const s of streams)s.destroy();game.server.close();});
  a.connect({name:'Tarin player',character:'tarin'});await waitFor(()=>welcomeA);
@@ -54,6 +54,7 @@ test('two real WebSocket clients see character choice, movement, shared NPCs, re
  await waitFor(()=>states.b.players.find(p=>p.id===welcomeA.id)?.chat?.text==='Hi Amy!');
  b.send({type:'chat',text:'Follow me!'});
  await waitFor(()=>states.a.players.find(p=>p.id===welcomeB.id)?.chat?.text==='Follow me!');
+ assert.deepEqual(chatEvents.a.map(m=>m.text),['Hi Amy!','Follow me!']);assert.deepEqual(chatEvents.b.map(m=>m.text),['Hi Amy!','Follow me!']);
  const before=states.a.players.find(p=>p.id===welcomeB.id).y;b.sendInput({x:0,y:1,run:false});
  await waitFor(()=>states.a.players.find(p=>p.id===welcomeB.id)?.y>before);
  assert.equal(states.a.players.find(p=>p.id===welcomeB.id).walking,true);
@@ -72,6 +73,7 @@ test('two real WebSocket clients see character choice, movement, shared NPCs, re
  await waitFor(()=>states.a.players.length===1);
  await waitFor(()=>b.welcomed&&states.a.players.length===2);
  assert.equal(welcomeB.id,oldId);assert.equal(b.token,oldToken);
+ assert.deepEqual(welcomeB.chatHistory.map(m=>m.text),['Hi Amy!','Follow me!']);assert.equal(chatEvents.b.length,2);
  b.disconnect();await waitFor(()=>states.a.players.length===1);assert.equal(states.a.players[0].id,welcomeA.id);
 });
 
