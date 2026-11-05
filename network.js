@@ -10,7 +10,7 @@ export class ForestConnection {
   ws.onmessage=event=>{if(ws!==this.socket)return;let m;try{m=JSON.parse(event.data);}catch{return;}
    if(m.type==='welcome'){this.token=m.token;this.welcomed=true;this.retry=0;this.lastInput=null;this.onWelcome(m);this.onStatus('Connected');}
    else if(m.type==='state'&&this.welcomed)this.onState(m);
-   else if(m.type==='error'){this.onError(m.message);if(!this.welcomed){this.wantsConnection=false;ws.close();}}
+   else if(m.type==='error'){this.onError(m.message,m.context);if(!this.welcomed){this.wantsConnection=false;ws.close();}}
   };
   ws.onerror=()=>{};
   ws.onclose=()=>{if(ws!==this.socket)return;this.welcomed=false;

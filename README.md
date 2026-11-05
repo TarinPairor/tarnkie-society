@@ -34,3 +34,17 @@ Tarin and Amy use their custom standing sprites and two-frame walking cycles. Wa
 
 Run `npm test` here for terrain, collision, animation, shared-world behavior, reconnects, and two-client HTTP/WebSocket protocol tests. The WebSocket integration tests use paired in-memory streams rather than binding a port.
 # tarnkie-society
+
+## Hugs
+
+Move within 56 world pixels of another player, then press **H** or tap the contextual **Hug** button. The recipient can tap **Accept**/**Deny**, or press **E**/**Q** (Escape also denies). No hug starts without the recipient accepting. Requests expire after 10 seconds, moving apart, disconnecting, or changing the world. Only one pending/active hug per player is allowed, with a short request cooldown.
+
+Acceptance safely brings both players together, freezes movement for 2.8 seconds, and shows Tarin/Amy hug poses with floating pixel hearts to every player. Reduced-motion settings use stationary hearts. The server checks distance, clear space, recipient identity, expiry, and consent.
+
+Tarin uses `tarin-hug-40x40.json`; Amy uses a newly authored `Amy-hug-16x16.json` derived from her custom standing sprite. Both are bundled in `assets/actors.json` by the editor's `game:assets` command.
+
+## Chat
+
+Tap the speech-bubble icon in the top-right corner, or press **Enter** / **C**, to open chat. Type up to 140 characters and press Enter/Send, or click a quick message such as “Hi!”, “Follow me!”, or “Want a hug?”. Escape or the close button returns to the game. Movement and touch controls stop while the composer is open.
+
+Messages appear in wrapping speech bubbles above the sender for six seconds and synchronize over WebSockets. Each player's newest message replaces their previous bubble; there is no persistent chat history. The server validates messages and applies an 800 ms cooldown per sender. Speech clears on disconnect or world regeneration. Quick messages and typed messages share the same delivery behavior.

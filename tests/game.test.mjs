@@ -6,6 +6,8 @@ import * as engine from '../world.js';
 import {advanceWalk,walkingSprite} from '../animation.js';
 import {ForestConnection} from '../network.js';
 import {createTouchControls} from '../touch.js';
+import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat} from '../chat.js';
+import {HUG_RANGE,HUG_DURATION} from '../hug-config.js';
 const {SIZE,TILE,makeWorld,canStand,moveActor,makeCreatures,updateCreature,randomFromSeed}=engine;
 const collection=JSON.parse(readFileSync(new URL('../assets/collection.json',import.meta.url)));
 const types=collection.filter(o=>['People','Creatures','Monsters'].includes(o.category));
@@ -46,9 +48,9 @@ test('all creature types spawn and wander without combat or escaping the terrain
 test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and toggles map',async()=>{
  const elements=new Map();let frames=0;
  const context=new Proxy({measureText:()=>({width:24})},{get:(o,k)=>o[k]||(()=>{}),set:(o,k,v)=>(o[k]=v,true)});
- function element(selector){if(!elements.has(selector))elements.set(selector,{width:800,height:500,value:'TARIN-01',hidden:false,style:{},tagName:'CANVAS',handlers:{},classList:{add(){}},getContext:()=>context,getBoundingClientRect:()=>({width:1000,height:600}),setAttribute(){},focus(){},setPointerCapture(){},addEventListener(n,fn){this.handlers[n]=fn;}});return elements.get(selector);}
+ function element(selector){if(!elements.has(selector))elements.set(selector,{width:800,height:500,value:'TARIN-01',hidden:false,style:{},tagName:'CANVAS',handlers:{},classList:{add(){}},getContext:()=>context,getBoundingClientRect:()=>({width:1000,height:600}),setAttribute(){},appendChild(){},focus(){},setPointerCapture(){},addEventListener(n,fn){this.handlers[n]=fn;}});return elements.get(selector);}
  const windowEvents={};
- const sandbox={...engine,advanceWalk,walkingSprite,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
+ const sandbox={QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,HUG_RANGE,HUG_DURATION,...engine,advanceWalk,walkingSprite,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
  vm.createContext(sandbox);
  const code=readFileSync(new URL('../game.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/start\(\);\s*$/,'globalThis.started=start();');
  vm.runInContext(code,sandbox);await sandbox.started;
@@ -74,5 +76,34 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  windowEvents.keydown({key:'Escape',target:{tagName:'CANVAS'},preventDefault(){}});assert.equal(element('#menu').open,false);
  vm.runInContext('connection.regenerate=seed=>globalThis.requestedSeed=seed',sandbox);
  element('#random-seed').onclick();assert.equal(sandbox.requestedSeed,'FERN-3F');
+
+ vm.runInContext(`
+  connection.send=message=>globalThis.sentHug=message;
+  state.players.push({id:'other',name:'Other player',kind:'tarin',x:player.x+10,y:player.y,walking:false});
+  receiveState(state);updateHugUI();
+ `,sandbox);
+ assert.equal(element('#hug-action').hidden,false);
+ windowEvents.keydown({key:'h',repeat:false,target:{tagName:'CANVAS'},preventDefault(){}});
+ assert.equal(sandbox.sentHug.type,'hug-request');assert.equal(sandbox.sentHug.targetId,'other');
+ vm.runInContext(`state.hugRequests=[{id:'request-one',from:'other',to:localId,fromName:'Other player'}];receiveState(state);updateHugUI();`,sandbox);
+ assert.equal(element('#hug-prompt').hidden,false);assert.match(element('#hug-question').textContent,/Other player/);
+ element('#hug-accept').onclick();assert.equal(sandbox.sentHug.type,'hug-response');assert.equal(sandbox.sentHug.accept,true);
+ vm.runInContext(`
+  state.hugRequests=[];state.players.forEach(p=>p.hugging=true);state.hugs=[{id:'hug-one',players:[localId,'other'],remainingMs:HUG_DURATION}];
+  receiveState(state);render();updateHugUI();
+ `,sandbox);
+ assert.equal(element('#hug-prompt').hidden,true);assert.equal(element('#hug-action').hidden,true);
+ vm.runInContext(`state.players.forEach(p=>p.hugging=false);state.hugs=[];state.hugRequests=[{id:'request-two',from:'other',to:localId,fromName:'Other player'}];receiveState(state);`,sandbox);
+ windowEvents.keydown({key:'q',repeat:false,target:{tagName:'CANVAS'},preventDefault(){}});assert.equal(sandbox.sentHug.accept,false);
+
+ vm.runInContext(`state.hugRequests=[];receiveState(state);connection.send=message=>globalThis.sentMessage=message;setChatOpen(true);keys.add('d');update(.04);`,sandbox);
+ assert.equal(element('#chat-panel').hidden,false);assert.equal(sandbox.sentInput.x,0);
+ element('#chat-input').value='  Hello   Amy!  ';element('#chat-form').handlers.submit({preventDefault(){}});
+ assert.equal(sandbox.sentMessage.type,'chat');assert.equal(sandbox.sentMessage.text,'Hello Amy!');
+ vm.runInContext(`state.players[0].chat={id:'chat-one',text:'Hello Amy!',remainingMs:6000};receiveState(state);render();`,sandbox);
+ assert.equal(element('#chat-input').value,'');assert.equal(element('#chat-feedback').textContent,'Sent.');
+ assert.match(element('#chat-announcement').textContent,/Hello Amy!/);
+ vm.runInContext(`sendChat(QUICK_MESSAGES[0]);`,sandbox);assert.equal(sandbox.sentMessage.text,'Hi!');
+ windowEvents.keydown({key:'Escape',target:{tagName:'INPUT'},preventDefault(){}});assert.equal(element('#chat-panel').hidden,true);
  assert(readFileSync(new URL('../assets/tarin.json',import.meta.url),'utf8').includes('tarin-front'));
 });

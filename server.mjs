@@ -18,7 +18,7 @@ export function createGameServer(){
  }catch{res.writeHead(404);res.end('Not found');}});
  const wss=new WebSocketServer({noServer:true,maxPayload:4096});
  const send=(ws,message)=>{if(ws.readyState===WebSocket.OPEN&&ws.bufferedAmount<1024*1024)ws.send(JSON.stringify(message));};
- const broadcast=()=>{const state=room.snapshot();for(const ws of wss.clients)if(ws.player)send(ws,state);};
+ const broadcast=()=>{for(const ws of wss.clients)if(ws.player)send(ws,room.snapshot(ws.player.id));};
  server.on('upgrade',(req,socket,head)=>{
   let sameOrigin=true;try{if(req.headers.origin)sameOrigin=new URL(req.headers.origin).host===req.headers.host;}catch{sameOrigin=false;}
   if(req.url!=='/ws'||!sameOrigin||wss.clients.size>=64){socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');socket.destroy();return;}
@@ -27,14 +27,17 @@ export function createGameServer(){
  wss.on('connection',ws=>{
   ws.alive=true;ws.rateAt=Date.now();ws.rate=0;ws.on('pong',()=>ws.alive=true);ws.on('error',()=>{});
   const joinTimeout=setTimeout(()=>{if(!ws.player)ws.close(1008,'Join required');},15000);joinTimeout.unref();
-  ws.on('message',data=>{try{
+  ws.on('message',data=>{let context;try{
    if(Date.now()-ws.rateAt>=1000){ws.rateAt=Date.now();ws.rate=0;}if(++ws.rate>100){ws.close(1008,'Too many messages');return;}
-   const m=JSON.parse(data.toString());if(!m||typeof m!=='object')return;
+   const m=JSON.parse(data.toString());context=m?.type;if(!m||typeof m!=='object')return;
    if(m.type==='join'&&!ws.player){ws.player=room.join(m,ws);clearTimeout(joinTimeout);send(ws,{type:'welcome',id:ws.player.id,token:ws.player.token});broadcast();}
+   else if(m.type==='chat'&&ws.player){room.chat(ws.player,m.text);broadcast();}
+   else if(m.type==='hug-request'&&ws.player){room.hugs.request(ws.player,m.targetId);broadcast();}
+   else if(m.type==='hug-response'&&ws.player){room.hugs.respond(ws.player,m.requestId,m.accept);broadcast();}
    else if(m.type==='input'&&ws.player)room.input(ws.player,m);
    else if(m.type==='regenerate'&&ws.player){room.regenerate(ws.player,m.seed);broadcast();}
    else if(m.type==='logout'){room.logout(ws.player);ws.player=null;ws.close(1000);broadcast();}
-  }catch(error){send(ws,{type:'error',message:error instanceof SyntaxError?'Invalid message.':error.message});}});
+  }catch(error){send(ws,{type:'error',context,message:error instanceof SyntaxError?'Invalid message.':error.message});}});
   ws.on('close',()=>{clearTimeout(joinTimeout);room.leave(ws.player);broadcast();});
  });
  let ticks=0,last=Date.now();

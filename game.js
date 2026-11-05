@@ -1,3 +1,5 @@
+import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat} from './chat.js';
+import {HUG_RANGE,HUG_DURATION} from './hug-config.js';
 import {createTouchControls} from './touch.js';
 import {ForestConnection} from './network.js';
 import {walkingSprite} from './animation.js';
@@ -6,11 +8,13 @@ const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d
 const keys=new Set(),sprites=new Map(),treeSprites=[],grassSprites=[];
 let world,creatures=[],player,collection=[],camera={x:0,y:0},paused=false,ready=false,time=0,previous=0,viewWidth=800,viewHeight=500,mapVisible=false;
 let menuOpen=false,connection=null,joined=false,localId=null,revision=null,remotePlayers=[];
+let hugRequests=[],hugEffects=new Map(),currentHugRequest=null,hugTarget=null,lastHugNotice=null,noticeUntil=0;
+let chatOpen=false,pendingChat=null,lastChatIds=new Map();
 let selectedCharacter='tarin',savedProfile=null,touchControls=null;
 function clearInput(){keys.clear();touchControls?.reset();}
 try{savedProfile=JSON.parse(sessionStorage.getItem('forest-profile'));}catch{}
 const menu=$('#menu');
-menu.addEventListener('toggle',()=>{menuOpen=menu.open;clearInput();if(player)player.walking=false;if(!menuOpen)canvas.focus();});
+menu.addEventListener('toggle',()=>{menuOpen=menu.open;if(menuOpen)setChatOpen(false);clearInput();if(player)player.walking=false;if(!menuOpen)canvas.focus();});
 function closeMenu(){menu.open=false;menuOpen=false;clearInput();canvas.focus();}
 const zoom=1.6,reducedMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
 function surface(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;return c;}
@@ -51,7 +55,7 @@ function generate(seed){
 }
 function resize(){const r=canvas.getBoundingClientRect();canvas.width=Math.max(1,Math.round(r.width));canvas.height=Math.max(1,Math.round(r.height));viewWidth=canvas.width/zoom;viewHeight=canvas.height/zoom;ctx.imageSmoothingEnabled=false;}
 new ResizeObserver(resize).observe(canvas);
-function setPaused(value){paused=value;clearInput();$('#paused').hidden=!value;$('#pause').setAttribute('aria-pressed',String(value));$('#pause').innerHTML=`${value?'Resume':'Pause'} <kbd>P</kbd>`;}
+function setPaused(value){if(value)setChatOpen(false);paused=value;clearInput();$('#paused').hidden=!value;$('#pause').setAttribute('aria-pressed',String(value));$('#pause').innerHTML=`${value?'Resume':'Pause'} <kbd>P</kbd>`;}
 $('#pause').onclick=()=>{if(ready){setPaused(!paused);if(paused)closeMenu();}};$('#resume').onclick=()=>{setPaused(false);closeMenu();};
 function toggleMap(){mapVisible=!mapVisible;$('#map-panel').hidden=!mapVisible;$('#show-map').innerHTML=`${mapVisible?'Hide':'Show'} map <kbd>M</kbd>`;$('#show-map').setAttribute('aria-pressed',String(mapVisible));}
 $('#toggle-map').onclick=toggleMap;$('#show-map').onclick=toggleMap;
@@ -59,21 +63,26 @@ $('#seed-form').addEventListener('submit',e=>{e.preventDefault();if(!joined)retu
 $('#random-seed').onclick=()=>{if(!joined)return;connection.regenerate(`FERN-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36).toUpperCase()}`);};
 window.addEventListener('keydown',e=>{
  if(!joined||typeof e.key!=='string')return;
+ if(e.key==='Escape'&&chatOpen){e.preventDefault();setChatOpen(false);canvas.focus();return;}
  if(e.key==='Escape'&&menu.open){e.preventDefault();closeMenu();return;}
  if(['INPUT','TEXTAREA','BUTTON'].includes(e.target?.tagName))return;
- const key=e.key.toLowerCase();if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright','shift','p','m',' '].includes(key))e.preventDefault();
+ const key=e.key.toLowerCase();
+ if((key==='enter'||key==='c')&&!e.repeat&&!menuOpen&&!paused){e.preventDefault();setChatOpen(!chatOpen);return;}
+ if(chatOpen)return;
+ if(!e.repeat&&currentHugRequest&&['e','q','escape'].includes(key)){e.preventDefault();respondToHug(key==='e');return;}
+ if(key==='h'&&!e.repeat){e.preventDefault();offerHug();return;}if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright','shift','p','m',' '].includes(key))e.preventDefault();
  if(key==='p'&&!e.repeat&&ready){setPaused(!paused);return;}if(key==='m'&&!e.repeat){toggleMap();return;}
  if(joined&&!paused&&!menuOpen)keys.add(key);
 });
 window.addEventListener('keyup',e=>{if(typeof e.key==='string')keys.delete(e.key.toLowerCase());});window.addEventListener('blur',()=>{if(ready)setPaused(true);});document.addEventListener('visibilitychange',()=>{if(document.hidden&&ready)setPaused(true);});
-canvas.addEventListener('pointerdown',closeMenu);
+canvas.addEventListener('pointerdown',()=>{setChatOpen(false);closeMenu();});
 $('#seed').addEventListener('focus',()=>keys.clear());
-touchControls=createTouchControls({joystick:$('#joystick'),thumb:$('#joystick-thumb'),sprint:$('#sprint'),enabled:()=>joined&&connection?.welcomed&&!paused&&!menuOpen});
+touchControls=createTouchControls({joystick:$('#joystick'),thumb:$('#joystick-thumb'),sprint:$('#sprint'),enabled:()=>joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!player?.hugging});
 window.addEventListener('resize',clearInput);
 window.addEventListener('orientationchange',clearInput);
 
 function update(dt){
- const enabled=joined&&connection?.welcomed&&!paused&&!menuOpen;
+ const enabled=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!player.hugging;
  const touch=touchControls.input(),keyboardX=(keys.has('d')||keys.has('arrowright')?1:0)-(keys.has('a')||keys.has('arrowleft')?1:0),keyboardY=(keys.has('s')||keys.has('arrowdown')?1:0)-(keys.has('w')||keys.has('arrowup')?1:0);
  const keyboardMoving=keyboardX!==0||keyboardY!==0;
  connection?.sendInput({x:enabled?(keyboardMoving?keyboardX:touch.x):0,y:enabled?(keyboardMoving?keyboardY:touch.y):0,run:enabled&&(keys.has('shift')||touch.run)});
@@ -85,16 +94,29 @@ function update(dt){
 function receiveState(state){
  if(!ready)return;
  const reset=revision!==state.revision||world.seed!==state.seed;
- if(reset){generate(state.seed);revision=state.revision;}
- function merge(old,next){const existing=new Map(old.map(a=>[a.id,a]));return next.map(a=>{const previous=existing.get(a.id);return {...a,x:!reset&&previous?previous.x:a.x,y:!reset&&previous?previous.y:a.y,targetX:a.x,targetY:a.y};});}
+ if(reset){generate(state.seed);revision=state.revision;hugEffects.clear();}
+ function merge(old,next){const existing=new Map(old.map(a=>[a.id,a]));return next.map(a=>{const previous=existing.get(a.id);return {...a,x:!reset&&previous?previous.x:a.x,y:!reset&&previous?previous.y:a.y,targetX:a.x,targetY:a.y,chatUntil:time+(a.chat?.remainingMs||0)/1000};});}
  const self=state.players.find(a=>a.id===localId);if(!self)return;
- const oldSelf=player;player={...self,x:reset?self.x:oldSelf.x,y:reset?self.y:oldSelf.y,targetX:self.x,targetY:self.y};
+ const oldSelf=player;if(self.hugging&&!oldSelf.hugging)clearInput();player={...self,x:reset?self.x:oldSelf.x,y:reset?self.y:oldSelf.y,targetX:self.x,targetY:self.y,chatUntil:time+(self.chat?.remainingMs||0)/1000};
  if(reset)camera={x:self.x,y:self.y};
  remotePlayers=merge(remotePlayers,state.players.filter(a=>a.id!==localId));creatures=merge(creatures,state.creatures);
  $('#player-count').textContent=`${state.players.length} online`;
  $('#online-list').textContent=state.players.map(a=>`${a.name} (${a.kind==='amy'?'Amy':'Tarin'})`).join(' · ');
  const host=state.hostId===localId;$('#seed').disabled=!host;$('#random-seed').disabled=!host;$('#seed-submit').disabled=!host;
  $('#seed-note').textContent=host?'Changing this seed regenerates the forest for everyone.':'Only the first connected player can change the forest.';
+ hugRequests=state.hugRequests||[];
+ const incoming=hugRequests.find(r=>r.to===localId);
+ if(incoming&&incoming.id!==currentHugRequest?.id)clearInput();
+ currentHugRequest=incoming||null;
+ const liveIds=new Set();
+ for(const h of state.hugs||[]){liveIds.add(h.id);if(!hugEffects.has(h.id))hugEffects.set(h.id,{...h,started:time-(HUG_DURATION-h.remainingMs)/1000});}
+ for(const id of hugEffects.keys())if(!liveIds.has(id))hugEffects.delete(id);
+ if(state.hugNotice&&state.hugNotice.id!==lastHugNotice){lastHugNotice=state.hugNotice.id;showHugNotice(state.hugNotice.text);}
+ for(const p of state.players){if(p.chat&&lastChatIds.get(p.id)!==p.chat.id){lastChatIds.set(p.id,p.chat.id);$('#chat-announcement').textContent=`${p.name}: ${p.chat.text}`;}}
+ for(const id of lastChatIds.keys())if(!state.players.some(p=>p.id===id))lastChatIds.delete(id);
+ if(pendingChat&&self.chat?.text===pendingChat.text){if(pendingChat.clearDraft&&$('#chat-input').value===pendingChat.draft)$('#chat-input').value='';pendingChat=null;$('#chat-feedback').textContent='Sent.';}
+
+
 }
 
 let left=0,top=0;
@@ -136,11 +158,73 @@ function render(){
  draws.sort((a,b)=>a.y-b.y);for(const d of draws)d.draw();
  // A small marker keeps Tarin visible even where multiple canopies overlap.
  for(const tree of world.trees)if(tree.y>player.y&&Math.abs(tree.x-player.x)<30&&tree.y-player.y<72){ctx.fillStyle='#e8eacb';ctx.fillRect(Math.round(player.x)-1,Math.round(player.y)-25,3,3);}
+ drawHugHearts();
+ drawChatBubbles();
  ctx.setTransform(1,0,0,1,0,0);
  const nearest=world.settlements.find(v=>Math.hypot(player.x/TILE-v.x,player.y/TILE-v.y)<12);$('#location-name').textContent=nearest?.name||'Deep forest';$('#coordinates').textContent=`${Math.floor(player.x/TILE)}, ${Math.floor(player.y/TILE)}`;
  if(mapVisible){mapCtx.imageSmoothingEnabled=false;mapCtx.drawImage(mapBackground,0,0);mapCtx.strokeStyle='#edf3cda0';mapCtx.lineWidth=1;mapCtx.strokeRect(left/TILE,top/TILE,viewWidth/TILE,viewHeight/TILE);mapCtx.fillStyle='#f6edc8';mapCtx.fillRect(Math.floor(player.x/TILE)-1,Math.floor(player.y/TILE)-1,3,3);}
 }
-function frame(now){const dt=Math.min(.04,(now-previous)/1000||0);previous=now;if(ready){time+=dt;if(joined)update(dt);render();}requestAnimationFrame(frame);}
+function showHugNotice(text){$('#hug-notice').textContent=text;noticeUntil=time+3;$('#hug-notice').hidden=false;}
+function offerHug(){if(hugRequests.some(r=>r.from===localId||r.to===localId)||!hugTarget||!joined||!connection?.welcomed||paused||menuOpen||chatOpen||player.hugging)return;connection.send({type:'hug-request',targetId:hugTarget.id});clearInput();}
+function respondToHug(accept){if(!currentHugRequest||!connection?.welcomed)return;connection.send({type:'hug-response',requestId:currentHugRequest.id,accept});currentHugRequest=null;$('#hug-prompt').hidden=true;clearInput();canvas.focus();}
+$('#hug-action').onclick=offerHug;$('#hug-accept').onclick=()=>respondToHug(true);$('#hug-deny').onclick=()=>respondToHug(false);
+function updateHugUI(){
+ const available=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen;
+ hugTarget=available&&!player.hugging?remotePlayers.filter(p=>!p.hugging&&Math.hypot(p.x-player.x,p.y-player.y)<=HUG_RANGE).sort((a,b)=>Math.hypot(a.x-player.x,a.y-player.y)-Math.hypot(b.x-player.x,b.y-player.y))[0]:null;
+ const outgoing=hugRequests.find(r=>r.from===localId),action=$('#hug-action');
+ action.hidden=!available||(!hugTarget&&!outgoing)||!!currentHugRequest||!!player.hugging;
+ action.disabled=!!outgoing;action.textContent=outgoing?'Hug requested…':hugTarget?`Hug ${hugTarget.name} · H`:'';
+ $('#hug-prompt').hidden=!available||!currentHugRequest;
+ if(currentHugRequest){$('#hug-question').textContent=`${currentHugRequest.fromName} would like to hug you.`;$('#hug-countdown').textContent='Move away to cancel. Requests expire after 10 seconds.';}
+ if(time>=noticeUntil)$('#hug-notice').hidden=true;
+}
+function drawHugHearts(){
+ const actors=[player,...remotePlayers];
+ for(const effect of hugEffects.values()){
+  const pair=effect.players.map(id=>actors.find(p=>p.id===id));if(pair.some(p=>!p))continue;
+  const x=(pair[0].x+pair[1].x)/2,y=Math.min(pair[0].y,pair[1].y)-28,elapsed=time-effect.started;
+  if(!visible(x,y,90))continue;
+  for(let i=0;i<(reducedMotion?2:8);i++){
+   const age=elapsed-i*.24;if(age<0||age>1.25)continue;
+   ctx.save();ctx.globalAlpha=reducedMotion?1:Math.min(1,age*7)*(1-age/1.25);
+   const drift=reducedMotion?(i?9:-9):Math.sin(i*2.4+age*2)*16,rise=reducedMotion?18:age*37;
+   drawSprite('heart',x+drift,y-rise,11+(i%2)*3);ctx.restore();
+  }
+ }
+}
+function setChatOpen(value){
+ chatOpen=!!value&&joined&&!!connection?.welcomed;
+ $('#chat-panel').hidden=!chatOpen;$('#chat-toggle').setAttribute('aria-expanded',String(chatOpen));
+ if(chatOpen){menu.open=false;menuOpen=false;clearInput();$('#chat-input').focus();}
+}
+function sendChat(text,clearDraft=false){
+ if(!joined||!connection?.welcomed){$('#chat-feedback').textContent='Reconnect to send a message.';return;}
+ try{text=cleanChat(text);}catch(error){$('#chat-feedback').textContent=error.message;return;}
+ clearInput();pendingChat={text,clearDraft,draft:$('#chat-input').value,sentAt:time};$('#chat-feedback').textContent='Sending…';connection.send({type:'chat',text});
+}
+$('#chat-toggle').onclick=()=>{setChatOpen(!chatOpen);if(!chatOpen)canvas.focus();};
+$('#chat-close').onclick=()=>{setChatOpen(false);canvas.focus();};
+$('#chat-form').addEventListener('submit',e=>{e.preventDefault();sendChat($('#chat-input').value,true);});
+for(const text of QUICK_MESSAGES){const button=document.createElement('button');button.type='button';button.textContent=text;button.onclick=()=>sendChat(text);$('#quick-messages').appendChild(button);}
+function updateChatUI(){
+ const available=joined&&connection?.welcomed&&!menuOpen&&!paused;
+ $('#chat-toggle').hidden=!available;
+ if(!available&&chatOpen)setChatOpen(false);
+ if(pendingChat&&time-pendingChat.sentAt>5){pendingChat=null;$('#chat-feedback').textContent='Message not confirmed. Try sending again.';}
+}
+function drawChatBubbles(){
+ for(const p of [...remotePlayers,...(joined?[player]:[])]){
+  if(!p.chat||time>=p.chatUntil||!visible(p.x,p.y,100))continue;
+  ctx.save();ctx.font='9px sans-serif';ctx.textAlign='left';ctx.textBaseline='top';
+  const maxWidth=Math.min(126,viewWidth-30),lines=wrapChat(p.chat.text,text=>ctx.measureText(text).width,maxWidth-16);
+  const width=Math.max(45,...lines.map(line=>ctx.measureText(line).width+16)),height=lines.length*12+12;
+  const x=Math.round(Math.max(left+6,Math.min(left+viewWidth-width-6,p.x-width/2))),bottom=p.y-(p.kind==='amy'?32:43)-21,y=Math.round(Math.max(top+6,bottom-height));
+  ctx.fillStyle='#294333';ctx.fillRect(x-1,y-1,width+2,height+2);ctx.fillStyle='#f6f2df';ctx.fillRect(x,y,width,height);
+  const tail=Math.max(x+7,Math.min(x+width-7,p.x));ctx.beginPath();ctx.moveTo(tail-4,y+height);ctx.lineTo(tail,y+height+5);ctx.lineTo(tail+4,y+height);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#243c35';lines.forEach((line,i)=>ctx.fillText(line,x+8,y+6+i*12));ctx.restore();
+ }
+}
+function frame(now){const dt=Math.min(.04,(now-previous)/1000||0);previous=now;if(ready){time+=dt;if(joined)update(dt);render();updateHugUI();updateChatUI();}requestAnimationFrame(frame);}
 async function start(){
  try{
   const results=await Promise.all(['./assets/collection.json','./assets/actors.json'].map(async url=>{const res=await fetch(url);if(!res.ok)throw new Error(`Could not load ${url}`);return res.json();}));
@@ -152,10 +236,10 @@ async function start(){
   $('#player-name').focus();requestAnimationFrame(frame);
  }catch(error){$('#loading').textContent=`The forest could not load. Run npm install and npm run dev in the game folder, then open http://localhost:5174/. ${error.message}`;$('#loading').classList.add('error');}
 }
-function showError(message){$('#join-error').textContent=message;$('#join-error').hidden=false;$('#join-button').disabled=false;if(joined){$('#connection-status').textContent=message;$('#connection-status').hidden=false;}}
+function showError(message,context){if(context==='chat'){pendingChat=null;$('#chat-feedback').textContent=message;return;}$('#join-error').textContent=message;$('#join-error').hidden=false;$('#join-button').disabled=false;if(joined){$('#connection-status').textContent=message;$('#connection-status').hidden=false;}}
 connection=new ForestConnection({url:`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/ws`,onState:receiveState,
  onWelcome(message){savedProfile={name:$('#player-name').value.trim(),character:selectedCharacter,token:message.token};try{sessionStorage.setItem('forest-profile',JSON.stringify(savedProfile));}catch{}localId=message.id;joined=true;revision=null;$('#login').hidden=true;canvas.setAttribute('aria-label',`Explore as ${selectedCharacter==='amy'?'Amy':'Tarin'}. WASD or arrows to walk, Shift to run. Open the menu for controls.`);$('#join-button').disabled=false;$('#session-name').textContent=`${$('#player-name').value.trim()} · ${selectedCharacter==='amy'?'Amy':'Tarin'}`;setPaused(false);closeMenu();},
  onStatus(status){$('#connection-status').textContent=status;$('#connection-status').hidden=status==='Connected';if(status!=='Connected'){clearInput();if(player)player.walking=false;for(const a of remotePlayers)a.walking=false;}},onError:showError});
 $('#join-form').addEventListener('submit',e=>{e.preventDefault();if(!ready)return;const name=$('#player-name').value.trim();if(!name||name.length>24){showError('Enter a name from 1 to 24 characters.');return;}selectedCharacter=$('input[name="character"]:checked').value;$('#join-error').hidden=true;$('#join-button').disabled=true;connection.connect({name,character:selectedCharacter,token:savedProfile?.name===name&&savedProfile?.character===selectedCharacter?savedProfile.token:undefined});});
-$('#logout').onclick=()=>{connection.disconnect();savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}joined=false;localId=null;remotePlayers=[];clearInput();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=true;$('#player-name').focus();};
+$('#logout').onclick=()=>{connection.disconnect();savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}setChatOpen(false);pendingChat=null;lastChatIds.clear();joined=false;localId=null;remotePlayers=[];hugRequests=[];currentHugRequest=null;hugEffects.clear();$('#hug-prompt').hidden=true;$('#hug-action').hidden=true;clearInput();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=true;$('#player-name').focus();};
 start();
