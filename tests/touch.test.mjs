@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {joystickVector,createTouchControls} from '../touch.js';
+import {joystickVector,createTouchControls,createMiningJoystick} from '../touch.js';
 function element(){const handlers={},capture=new Set(),attributes={};return {handlers,attributes,style:{},addEventListener(n,f){handlers[n]=f;},setAttribute(n,v){attributes[n]=v;},setPointerCapture(id){capture.add(id);},hasPointerCapture:id=>capture.has(id),releasePointerCapture:id=>capture.delete(id),getBoundingClientRect:()=>({left:10,top:20,width:132,height:132})};}
 const event=(pointerId,clientX=76,clientY=86)=>({pointerId,clientX,clientY,button:0,preventDefault(){}});
 function setup(){const joystick=element(),thumb=element(),sprint=element();let active=true;const control=createTouchControls({joystick,thumb,sprint,enabled:()=>active});return {joystick,thumb,sprint,control,disable:()=>active=false};}
@@ -31,4 +31,15 @@ test('pointer cancellation, capture loss, and menu resets stop movement and rele
  }
  const {joystick,sprint,control,disable}=setup();joystick.handlers.pointerdown(event(1,0,86));sprint.handlers.pointerdown(event(2));control.reset();assert.deepEqual(control.input(),{x:0,y:0,run:false});assert(!joystick.hasPointerCapture(1));assert(!sprint.hasPointerCapture(2));
  disable();joystick.handlers.pointerdown(event(3,500,86));sprint.handlers.pointerdown(event(4));assert.deepEqual(control.input(),{x:0,y:0,run:false});
+});
+
+
+test('right mining joystick aims independently while walking and resets on release or cancellation',()=>{
+ const {joystick,control}=setup(),right=element(),thumb=element();let enabled=true;
+ const mining=createMiningJoystick({joystick:right,thumb,enabled:()=>enabled});
+ joystick.handlers.pointerdown(event(1,500,86));right.handlers.pointerdown(event(2,76,-100));assert.equal(control.input().x,1);assert.equal(mining.input().y,-1);
+ right.handlers.pointerup(event(3));assert.equal(mining.input().y,-1);right.handlers.pointermove(event(2,500,86));assert.equal(mining.input().x,1);
+ for(const reason of ['pointerup','pointercancel','lostpointercapture']){right.handlers.pointerdown(event(2,500,86));right.handlers[reason](event(2));assert.deepEqual(mining.input(),{x:0,y:0});assert.equal(control.input().x,1);}
+ right.handlers.pointerdown(event(5,500,86));mining.reset();assert.equal(right.hasPointerCapture(5),false);assert.equal(thumb.style.transform,'translate(0px, 0px)');
+ enabled=false;right.handlers.pointerdown(event(6,500,86));assert.deepEqual(mining.input(),{x:0,y:0});
 });

@@ -1,3 +1,4 @@
+import {exposedRock} from '../mining.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -165,4 +166,21 @@ test('WebSocket logins reject duplicate Tarins and allow the unused Amy slot',as
  a.connect({name:'First',character:'tarin'});await waitFor(()=>aReady);
  b.connect({name:'Second',character:'tarin'});await waitFor(()=>rejection);assert.match(rejection,/Tarin is already/);assert.equal(bReady,false);assert.equal(game.room.snapshot().onlinePlayers.length,1);
  b.connect({name:'Second',character:'amy'});await waitFor(()=>bReady);assert.equal(game.room.snapshot().onlinePlayers.length,2);
+});
+
+test('held WebSocket mining shares cracks and broken terrain, awards ore once and retains excavations on reconnect',async t=>{
+ const game=createGameServer(),streams=[],WebSocketClass=transport(game,streams),states={},welcomes={};
+ const options=who=>({url:'ws://localhost/ws',WebSocketClass,onState:s=>states[who]=s,onWelcome:m=>welcomes[who]=m,onStatus(){},onError:m=>assert.fail(m)});
+ const a=new ForestConnection(options('a')),b=new ForestConnection(options('b'));let heartbeat;
+ t.after(()=>{clearInterval(heartbeat);a.disconnect();b.disconnect();game.shutdown();for(const s of streams)s.destroy();game.server.close();});
+ a.connect({name:'Miner T',character:'tarin'});await waitFor(()=>welcomes.a);b.connect({name:'Miner A',character:'amy'});await waitFor(()=>welcomes.b);
+ const pa=[...game.room.sessions.values()].find(p=>p.id===welcomes.a.id),pb=[...game.room.sessions.values()].find(p=>p.id===welcomes.b.id);game.room.changeStage(pa,'mine');game.room.changeStage(pb,'mine');
+ const world=game.room.worldFor(pa),ore=world.structures.find(s=>s.kind==='ore'&&exposedRock(world,Math.floor(s.x/32),Math.floor(s.y/32))),x=Math.floor(ore.x/32),y=Math.floor(ore.y/32),offset=[[1,0],[-1,0],[0,1],[0,-1]].find(([dx,dy])=>!world.blocked[(y+dy)*144+x+dx]);
+ Object.assign(pa,{x:(x+offset[0])*32+16,y:(y+offset[1])*32+16});Object.assign(pb,{x:pa.x,y:pa.y});
+ heartbeat=setInterval(()=>a.send({type:'mine-target',x,y,progress:9999,amount:9999}),100);a.send({type:'mine-target',x,y,progress:9999});
+ await waitFor(()=>states.b?.players.find(p=>p.id===pa.id)?.mining?.progress>0);assert.equal(world.blocked[y*144+x],1);
+ await waitFor(()=>states.b?.brokenBlocks.includes(y*144+x));clearInterval(heartbeat);a.send({type:'mine-target',x:null,y:null});
+ assert.equal(states.a.inventory[ore.oreType],1);assert.equal(states.b.inventory[ore.oreType],0);assert.equal(world.blocked[y*144+x],0);
+ b.send({type:'mine-target',x,y});await new Promise(r=>setTimeout(r,150));assert.equal(pb.inventory[ore.oreType],0);
+ const oldId=pa.id;[...game.wss.clients].find(ws=>ws.player?.id===oldId).terminate();a.socket.terminate();await waitFor(()=>a.welcomed&&states.a?.brokenBlocks.includes(y*144+x));assert.equal(welcomes.a.id,oldId);assert.equal(states.a.inventory[ore.oreType],1);
 });

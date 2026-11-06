@@ -1,3 +1,4 @@
+import {InventoryStore} from './inventory-store.mjs';
 import {PROTOCOL_VERSION,PROTOCOL_ERROR} from './protocol.js';
 import {packCaveTerrain} from './terrain.js';
 import http from 'node:http';
@@ -8,14 +9,17 @@ import path from 'node:path';
 import {WebSocketServer,WebSocket} from 'ws';
 import {ForestRoom} from './multiplayer.js';
 
-export function createGameServer(){
+export function createGameServer({inventoryStore=new InventoryStore()}={}){
  const root=fileURLToPath(new URL('.',import.meta.url));
  const collection=JSON.parse(readFileSync(new URL('./assets/collection.json',import.meta.url)));
- const room=new ForestRoom(collection.filter(o=>['Creatures','Monsters'].includes(o.category)));
+ const room=new ForestRoom(collection.filter(o=>['Creatures','Monsters'].includes(o.category)),{inventoryStore,onInventoryError(player,error){
+  console.error('Could not save character inventory:',error.message);
+  if(player.connection)send(player.connection,{type:'error',context:'inventory',message:'Inventory storage is unavailable. Ore has not been collected; please try again shortly.'});
+ }});
  const server=http.createServer(async(req,res)=>{try{
   const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
   const file=path.resolve(root,'.'+(pathname.endsWith('/')?pathname+'index.html':pathname));
-  if(!file.startsWith(root)||pathname.includes('/node_modules/')||!['.html','.css','.js','.json','.png','.svg'].includes(path.extname(file))){res.writeHead(404);return res.end('Not found');}
+  if((inventoryStore.filePath&&file===path.resolve(inventoryStore.filePath))||!file.startsWith(root)||(pathname.includes('/node_modules/')||pathname.startsWith('/data/'))||!['.html','.css','.js','.json','.png','.svg'].includes(path.extname(file))){res.writeHead(404);return res.end('Not found');}
   const data=await readFile(file);res.setHeader('Cache-Control','no-cache');res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.svg':'image/svg+xml'})[path.extname(file)]);res.end(data);
  }catch{res.writeHead(404);res.end('Not found');}});
  const wss=new WebSocketServer({noServer:true,maxPayload:4096});
@@ -38,6 +42,7 @@ export function createGameServer(){
    if(Date.now()-ws.rateAt>=1000){ws.rateAt=Date.now();ws.rate=0;}if(++ws.rate>100){ws.close(1008,'Too many messages');return;}
    const m=JSON.parse(data.toString());context=m?.type;if(!m||typeof m!=='object')return;
    if(m.type==='join'&&!ws.player){if(m.protocolVersion!==PROTOCOL_VERSION)throw new Error(PROTOCOL_ERROR);ws.player=room.join(m,ws);clearTimeout(joinTimeout);send(ws,{type:'welcome',protocolVersion:PROTOCOL_VERSION,id:ws.player.id,token:ws.player.token,chatHistory:room.chatHistory});broadcast();}
+   else if(m.type==='mine-target'&&ws.player)room.mineTarget(ws.player,m.x,m.y);
    else if(m.type==='chat'&&ws.player){room.chat(ws.player,m.text);const message=room.chatHistory.at(-1);for(const client of wss.clients)if(client.player)send(client,{type:'chat-message',message});broadcast();}
    else if(m.type==='hug-request'&&ws.player){room.hugs.request(ws.player,m.targetId);broadcast();}
    else if(m.type==='hug-response'&&ws.player){room.hugs.respond(ws.player,m.requestId,m.accept);broadcast();}
@@ -58,7 +63,8 @@ export function createGameServer(){
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href){
  const args=process.argv.slice(2),index=args.indexOf('--port'),port=index>=0?Number(args[index+1]):Number(process.env.PORT)||5174;
- const {server,shutdown}=createGameServer();let listeningPort=port;
+ const dataDir=process.env.GAME_DATA_DIR||fileURLToPath(new URL('./data/',import.meta.url));
+ const {server,shutdown}=createGameServer({inventoryStore:new InventoryStore({filePath:path.join(dataDir,'inventories.json')})});let listeningPort=port;
  server.on('error',error=>{
   if(error.code==='EADDRINUSE'&&listeningPort<port+10){
    console.log(`Port ${listeningPort} is already in use. Trying ${listeningPort+1} for multiplayer…`);

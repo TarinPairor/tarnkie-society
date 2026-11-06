@@ -16,11 +16,13 @@ For devices on the same Wi-Fi, open **http://<server-computer-LAN-IP>:5174/** on
 The game fills the window. The top-left Menu contains controls, the connected-player list, Leave / change character, pause, map, and seed settings. The menu and map start closed.
 
 - WASD / arrows: walk
+- I: open / close inventory
+- Hold left click on cave rock: mine within five blocks
 - Shift: run
 - P: pause your movement
 - M: toggle the minimap
 - Escape / click the world: close the menu
-- Touch devices: drag the left thumb joystick to move; hold the right Sprint button to run. Joystick deflection controls walking speed, and both touches work together. Controls reset on touch cancellation, menu, pause, disconnect, and screen rotation.
+- Touch devices: drag the left thumb joystick to move; hold the right Sprint button to run. Tap the backpack to open inventory and aim the right mining joystick in the cave to dig within five blocks. The left joystick still moves independently. Joystick deflection controls walking speed, and both touches work together. Controls reset on touch cancellation, menu, pause, disconnect, and screen rotation.
 
 Opening the menu, pausing, or switching windows stops your character. Other players and creatures continue moving. Leave / change character returns to the join screen.
 
@@ -28,7 +30,7 @@ Opening the menu, pausing, or switching windows stops your character. Other play
 
 One shared 144×144 forest has five connected villages, cottages, wells, fences, and wandering creatures. The server advances player movement and NPC AI at 20 Hz and broadcasts snapshots at 10 Hz. Clients interpolate positions and display names, character choices, facing, and walking frames in real time. Movement is collision checked on the server; stale inputs stop automatically. This remains a prototype without combat or building interiors.
 
-Forest regeneration and randomization are temporarily disabled for all players, including the host. The server rejects regeneration requests; the menu controls are read-only. A disconnected player disappears immediately; automatic reconnect can recover their session and position within 15 seconds. Tab-local session storage also supports a quick refresh/rejoin. Display names are reserved for that 15-second grace period, then released. Leaving explicitly releases the name immediately. No account/password or persistent database is used: restarting the server resets sessions and the world.
+Forest regeneration and randomization are temporarily disabled for all players, including the host. The server rejects regeneration requests; the menu controls are read-only. A disconnected player disappears immediately; automatic reconnect can recover their session and position within 15 seconds. Tab-local session storage also supports a quick refresh/rejoin. Display names are reserved for that 15-second grace period, then released. Leaving explicitly releases the name immediately. No account/password is used. Restarting the server resets sessions and the world; character inventories are saved separately.
 
 Tarin and Amy use their custom standing sprites and two-frame walking cycles. Walking cadence follows distance traveled, running accelerates it, and facing follows the sprite's native direction. Tarin's source art faces left, so only rightward facing mirrors it. Assets are bundled in `assets/`. Refresh them with `npm run game:assets` inside `../retro-png-maker/`.
 
@@ -94,3 +96,21 @@ Forest and mine collision arrays are independent. Player movement uses `worldFor
 ## Updating local development
 
 After pulling or changing game code, restart any old server process and fully refresh existing browser tabs. `npm run dev` now uses Node watch mode and restarts the backend when imported code changes; `npm start` runs a normal persistent production server. Browser/server protocol checks reject stale builds rather than allowing an old visible cave to be paired with a new collision layout. Mine-entry and hug actions restore canvas focus, and movement keys still work if a game button held focus.
+
+## Inventory and ore
+
+Cave rock contains copper (common, 70% of ore veins), iron (uncommon, 25%), and gold (rare, 5%). Veins can be buried: ore is visible only when its rock has a walkable neighbor. Exposed wall blocks look lighter and have a different texture from deep rock. Mining opens a floor tile and exposes its neighboring rock. Stone drops nothing; breaking an ore block adds one ore directly to your inventory. The outer cave boundary cannot be mined.
+
+On laptop, hold the left mouse button over an exposed block. Drag the pointer while holding to choose another block. On a phone, hold and aim the right joystick; it mines the first visible wall in that direction and continues digging as blocks break. Movement remains on the left joystick, and Sprint is still available. Both controls obey a maximum reach of five tiles, measured from the player to the target block center, and cannot mine through intervening rock. Stone takes 0.5 seconds per block; copper, iron, and gold each take 0.7 seconds. All blocks show progressive cracks. A translucent pickaxe swings during mining and spins briefly on each break; reduced-motion mode uses a still pickaxe.
+
+The server advances mining, checks reach and exposed rock, and shares progress and excavated tiles with everyone in that cave instance. Releasing the pointer/joystick, changing targets, opening a panel, pausing, disconnecting, hugging, leaving the cave, or moving out of reach stops mining. Missing input heartbeats stop mining automatically. Two players cannot receive duplicate drops for one block. Excavations survive reconnects and remain in that cave instance until it is discarded; fresh mine visits use new terrain.
+
+Press I or tap the backpack button on a phone to see a 5×5 inventory grid (25 slots). Each ore type stacks in one slot, with counts and rarity labels below the grid. Esc, I, the close button, or tapping the world closes the panel. Opening inventory stops movement and mining. Inventory belongs to the selected character: Tarin and Amy have separate saved ore counts, independent of display name, browser, and session token. Logout, removal, closing a tab, session expiry, changing characters, and restarting the server preserve those counts. Every collected ore is saved immediately; leaving also saves inventory. Reconnecting always uses the latest character inventory, so an older session cannot overwrite a newer save.
+
+### Inventory storage
+
+`npm start` and `npm run dev` write a versioned JSON save to `game/data/inventories.json` (relative to this server file). This private directory is ignored by git and cannot be downloaded through the game HTTP server. Updates use a flushed temporary file followed by atomic replacement. An unreadable/corrupt save stops startup instead of resetting inventory; if a save fails during mining, the ore block remains intact and an error is shown. Back up this file to preserve inventories when moving the server. Only one game server should write a save file.
+
+Set `GAME_DATA_DIR` to change the save directory. On Render, attach a persistent disk at `/var/data` and set `GAME_DATA_DIR=/var/data`. Only files under the disk mount survive service redeploys/restarts, and persistent disks require a paid service ([Render persistent disk documentation](https://render.com/docs/disks)). Without a persistent disk, logout/rejoin still restores character inventories while that server instance is running, but Render can discard the save on restart or redeploy.
+
+The programmatic `createGameServer()` and `ForestRoom` factories use an isolated in-memory store by default for tests; pass `inventoryStore: new InventoryStore({filePath: '/your/persistent/path/inventories.json'})` to enable disk persistence when embedding the server.

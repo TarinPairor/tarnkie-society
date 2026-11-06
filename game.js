@@ -1,10 +1,12 @@
+import {ORES,emptyInventory,inventorySlots} from './items.js';
+import {canMineBlock,exposedRock,miningRay,applyBrokenBlocks,MINING_REACH} from './mining.js';
 import {PROTOCOL_VERSION,PROTOCOL_ERROR} from './protocol.js';
 import {applyCaveTerrain} from './terrain.js';
 import {MINE_INFO,mineEntranceAt} from './mine-info.js';
 import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,sharesTreeCover} from './trees.js';
 import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory} from './chat.js';
 import {HUG_RANGE,HUG_DURATION} from './hug-config.js';
-import {createTouchControls} from './touch.js';
+import {createTouchControls,createMiningJoystick} from './touch.js';
 import {ForestConnection} from './network.js';
 import {walkingSprite,spriteFlip} from './animation.js';
 import {TILE,SIZE,makeWorld,makeCave,makeCreatures,randomFromSeed} from './world.js';
@@ -12,6 +14,8 @@ const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d
 const keys=new Set(),sprites=new Map(),treeSprites=[],grassSprites=[];
 let world,creatures=[],player,collection=[],camera={x:0,y:0},paused=false,ready=false,time=0,previous=0,viewWidth=800,viewHeight=500,mapVisible=false;
 let mineInfoAnchor=null,mineInfoUntil=0,nearbyPortal=null;
+let inventoryOpen=false,inventory=emptyInventory();
+let miningControls=null,mouseMining=null,miningTarget=null,lastMineKey=null,lastMineSent=0;
 let rosterSignature='';
 let menuOpen=false,connection=null,joined=false,localId=null,revision=null,remotePlayers=[];
 let hugRequests=[],hugEffects=new Map(),currentHugRequest=null,hugTarget=null,lastHugNotice=null,noticeUntil=0,lastOutgoingHug=null;
@@ -19,10 +23,10 @@ let serverChatMessages=[],chatSettings={bubbles:true,server:true};
 try{const saved=JSON.parse(localStorage.getItem('forest-chat-settings'));if(typeof saved?.bubbles==='boolean')chatSettings.bubbles=saved.bubbles;if(typeof saved?.server==='boolean')chatSettings.server=saved.server;}catch{}
 let chatOpen=false,pendingChat=null,lastChatIds=new Map();
 let selectedCharacter='tarin',savedProfile=null,touchControls=null;
-function clearInput(){keys.clear();touchControls?.reset();}
+function clearInput(){keys.clear();touchControls?.reset();miningControls?.reset();stopMining();}
 try{savedProfile=JSON.parse(sessionStorage.getItem('forest-profile'));}catch{}
 const menu=$('#menu');
-menu.addEventListener('toggle',()=>{menuOpen=menu.open;if(menuOpen)setChatOpen(false);clearInput();if(player)player.walking=false;if(!menuOpen)canvas.focus();});
+menu.addEventListener('toggle',()=>{menuOpen=menu.open;if(menuOpen){setChatOpen(false);setInventoryOpen(false);}clearInput();if(player)player.walking=false;if(!menuOpen)canvas.focus();});
 function closeMenu(){menu.open=false;menuOpen=false;clearInput();canvas.focus();}
 const zoom=1.6,reducedMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
 function surface(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;return c;}
@@ -39,6 +43,9 @@ function makeTextures(){
   for(let i=0;i<13;i++){g.fillStyle=base==='#a9ada9'?(i%2?'#b8bbb5':'#939994'):(i%2?'#282d32':'#161a1d');g.fillRect(Math.floor(random()*15)*2,Math.floor(random()*15)*2,2+i%3,2);}
   grassSprites.push(c);
  }
+ const rock=surface(32,32),rg=rock.getContext('2d');rg.fillStyle='#383e43';rg.fillRect(0,0,32,32);
+ for(const [x,y,w] of [[3,5,7],[19,3,6],[11,15,9],[2,25,6],[23,23,5]]){rg.fillStyle='#495157';rg.fillRect(x,y,w,2);rg.fillStyle='#292f34';rg.fillRect(x+1,y+3,w-2,2);}
+ grassSprites.push(rock);
  for(let v=0;v<3;v++){
   const c=surface(48,64),g=c.getContext('2d');const rect=(x,y,w,h,color)=>{g.fillStyle=color;g.fillRect(x,y,w,h)};
   rect(21,45,8,19,'#514b32');rect(22,45,3,18,'#7b6941');
@@ -69,7 +76,7 @@ function generate(seed,stage='forest',terrain=null){
 }
 function resize(){const r=canvas.getBoundingClientRect();canvas.width=Math.max(1,Math.round(r.width));canvas.height=Math.max(1,Math.round(r.height));viewWidth=canvas.width/zoom;viewHeight=canvas.height/zoom;ctx.imageSmoothingEnabled=false;}
 new ResizeObserver(resize).observe(canvas);
-function setPaused(value){if(value)setChatOpen(false);paused=value;clearInput();$('#paused').hidden=!value;$('#pause').setAttribute('aria-pressed',String(value));$('#pause').innerHTML=`${value?'Resume':'Pause'} <kbd>P</kbd>`;}
+function setPaused(value){if(value){setChatOpen(false);setInventoryOpen(false);}paused=value;clearInput();$('#paused').hidden=!value;$('#pause').setAttribute('aria-pressed',String(value));$('#pause').innerHTML=`${value?'Resume':'Pause'} <kbd>P</kbd>`;}
 $('#pause').onclick=()=>{if(ready){setPaused(!paused);if(paused)closeMenu();}};$('#resume').onclick=()=>{setPaused(false);closeMenu();};
 function toggleMap(){mapVisible=!mapVisible;$('#map-panel').hidden=!mapVisible;$('#show-map').innerHTML=`${mapVisible?'Hide':'Show'} map <kbd>M</kbd>`;$('#show-map').setAttribute('aria-pressed',String(mapVisible));}
 $('#toggle-map').onclick=toggleMap;$('#show-map').onclick=toggleMap;
@@ -77,13 +84,15 @@ $('#seed-form').addEventListener('submit',e=>{e.preventDefault();showHugNotice('
 $('#random-seed').onclick=()=>{showHugNotice('Forest changes are temporarily disabled.');};
 window.addEventListener('keydown',e=>{
  if(!joined||typeof e.key!=='string')return;
+ if(e.key==='Escape'&&inventoryOpen){e.preventDefault();setInventoryOpen(false);canvas.focus();return;}
+ if(e.key.toLowerCase()==='i'&&!e.repeat&&!['INPUT','TEXTAREA','SELECT'].includes(e.target?.tagName)){e.preventDefault();setInventoryOpen(!inventoryOpen);if(!inventoryOpen)canvas.focus();return;}
  if(e.key==='Escape'&&chatOpen){e.preventDefault();setChatOpen(false);canvas.focus();return;}
  if(e.key==='Escape'&&menu.open){e.preventDefault();closeMenu();return;}
  if(['INPUT','TEXTAREA','SELECT'].includes(e.target?.tagName))return;
  const key=e.key.toLowerCase();
  if(e.target?.tagName==='BUTTON'&&!['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright','shift'].includes(key))return;
  if((key==='enter'||key==='c')&&!e.repeat&&!menuOpen&&!paused){e.preventDefault();setChatOpen(!chatOpen);return;}
- if(chatOpen)return;
+ if(chatOpen||inventoryOpen)return;
  if(!e.repeat&&currentHugRequest&&['e','q','escape'].includes(key)){e.preventDefault();respondToHug(key==='e');return;}
  if(key==='e'&&!e.repeat&&nearbyPortal){e.preventDefault();useNearbyPortal();return;}
  if(key==='h'&&!e.repeat){e.preventDefault();offerHug();return;}if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright','shift','p','m',' '].includes(key))e.preventDefault();
@@ -92,18 +101,24 @@ window.addEventListener('keydown',e=>{
 });
 window.addEventListener('keyup',e=>{if(typeof e.key==='string')keys.delete(e.key.toLowerCase());});window.addEventListener('blur',()=>{if(ready)setPaused(true);});document.addEventListener('visibilitychange',()=>{if(document.hidden&&ready)setPaused(true);});
 canvas.addEventListener('pointerdown',event=>{
- setChatOpen(false);closeMenu();mineInfoAnchor=null;$('#mine-info').hidden=true;
+ setInventoryOpen(false);setChatOpen(false);closeMenu();mineInfoAnchor=null;$('#mine-info').hidden=true;
  if(!joined)return;
  const bounds=canvas.getBoundingClientRect(),x=left+(event.clientX-bounds.left)*canvas.width/bounds.width/zoom,y=top+(event.clientY-bounds.top)*canvas.height/bounds.height/zoom;
+ if(world.stage==='mine'&&event.pointerType!=='touch'&&(event.button===0||event.button===undefined)&&!paused){event.preventDefault();mouseMining={id:event.pointerId,clientX:event.clientX,clientY:event.clientY};canvas.setPointerCapture(event.pointerId);updateMining();}
  const entrance=mineEntranceAt(world,x,y);if(entrance){mineInfoAnchor=entrance;mineInfoUntil=Date.now()+5000;$('#mine-info').textContent=MINE_INFO;updateMineInfo();}
 });
+canvas.addEventListener('pointermove',event=>{if(mouseMining?.id===event.pointerId){mouseMining.clientX=event.clientX;mouseMining.clientY=event.clientY;}});
+for(const name of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(name,event=>{if(mouseMining?.id===event.pointerId)stopMining();});
+canvas.addEventListener('contextmenu',event=>{if(world?.stage==='mine')event.preventDefault();});
 $('#seed').addEventListener('focus',()=>keys.clear());
-touchControls=createTouchControls({joystick:$('#joystick'),thumb:$('#joystick-thumb'),sprint:$('#sprint'),enabled:()=>joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!player?.hugging});
+touchControls=createTouchControls({joystick:$('#joystick'),thumb:$('#joystick-thumb'),sprint:$('#sprint'),enabled:()=>joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player?.hugging});
+miningControls=createMiningJoystick({joystick:$('#mining-joystick'),thumb:$('#mining-thumb'),enabled:()=>miningAvailable()});
 window.addEventListener('resize',clearInput);
 window.addEventListener('orientationchange',clearInput);
 
 function update(dt){
- const enabled=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!player.hugging;
+ updateMining();
+ const enabled=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player.hugging;
  const touch=touchControls.input(),keyboardX=(keys.has('d')||keys.has('arrowright')?1:0)-(keys.has('a')||keys.has('arrowleft')?1:0),keyboardY=(keys.has('s')||keys.has('arrowdown')?1:0)-(keys.has('w')||keys.has('arrowup')?1:0);
  const keyboardMoving=keyboardX!==0||keyboardY!==0;
  connection?.sendInput({x:enabled?(keyboardMoving?keyboardX:touch.x):0,y:enabled?(keyboardMoving?keyboardY:touch.y):0,run:enabled&&(keys.has('shift')||touch.run)});
@@ -117,9 +132,12 @@ function receiveState(state){
  const worldSeed=state.worldSeed||state.seed;
  const reset=!!state.terrain||revision!==state.revision||world.seed!==worldSeed||world.stage!==(state.stage||'forest');
  if(reset){generate(worldSeed,state.stage||'forest',state.terrain);revision=state.revision;hugEffects.clear();mineInfoAnchor=null;$('#mine-info').hidden=true;}
- function merge(old,next){const existing=new Map(old.map(a=>[a.id,a]));return next.map(a=>{const previous=existing.get(a.id);return {...a,x:!reset&&previous?previous.x:a.x,y:!reset&&previous?previous.y:a.y,targetX:a.x,targetY:a.y,chatUntil:time+(a.chat?.remainingMs||0)/1000};});}
+ function merge(old,next){const existing=new Map(old.map(a=>[a.id,a]));return next.map(a=>{const previous=existing.get(a.id);return {...a,x:!reset&&previous?previous.x:a.x,y:!reset&&previous?previous.y:a.y,targetX:a.x,targetY:a.y,breakUntil:time+(a.breakEffect?.remainingMs||0)/1000,chatUntil:time+(a.chat?.remainingMs||0)/1000};});}
  const self=state.players.find(a=>a.id===localId);if(!self)return;
- const oldSelf=player;if(self.hugging&&!oldSelf.hugging)clearInput();player={...self,x:reset?self.x:oldSelf.x,y:reset?self.y:oldSelf.y,targetX:self.x,targetY:self.y,chatUntil:time+(self.chat?.remainingMs||0)/1000};
+ const oldSelf=player;if(self.hugging&&!oldSelf.hugging)clearInput();player={...self,x:reset?self.x:oldSelf.x,y:reset?self.y:oldSelf.y,targetX:self.x,targetY:self.y,breakUntil:time+(self.breakEffect?.remainingMs||0)/1000,chatUntil:time+(self.chat?.remainingMs||0)/1000};
+ inventory={...emptyInventory(),...state.inventory};world.minedOres=new Set(state.minedOres||[]);
+ for(const index of applyBrokenBlocks(world,state.brokenBlocks)){mapBackgroundCtx.fillStyle='#a9ada9';mapBackgroundCtx.fillRect(index%SIZE,Math.floor(index/SIZE),1,1);}
+ renderInventory();
  if(reset)camera={x:self.x,y:self.y};
  remotePlayers=merge(remotePlayers,state.players.filter(a=>a.id!==localId));creatures=merge(creatures,state.creatures);
  $('#player-count').textContent=`${state.players.length} in this area · ${state.onlineCount??state.players.length} online`;
@@ -170,7 +188,7 @@ function drawStructure(s){
   rect(-12,-52,4,58,'#b29a6c');rect(8,-52,4,58,'#b29a6c');for(let dy=-48;dy<6;dy+=10)rect(-9,dy,20,3,'#d1b77e');
   rect(-31,-31,5,13,'#dfae50');rect(-32,-35,7,7,'#ffe5a0');return;
  }
- if(s.kind==='ore'){const color=['#8faaa8','#b9a66e','#a18cbb'][s.variant];rect(-8,-13,8,7,color);rect(3,-7,6,8,color);rect(-2,-19,5,4,color);return;}
+ if(s.kind==='ore'){const color=ORES[s.oreType]?.color||'#bd7c50';rect(-8,-13,8,7,color);rect(3,-7,6,8,color);rect(-2,-19,5,4,color);return;}
 
  if(s.kind==='well'){
   shadow(x,y,27);rect(-14,-14,28,15,'#8b9278');rect(-11,-17,22,9,'#bdc0a0');rect(-7,-14,14,7,'#355b60');rect(-13,-36,3,24,'#746442');rect(10,-36,3,24,'#746442');rect(-18,-39,36,6,'#946c48');rect(-12,-44,24,5,'#b38b5b');rect(-6,-47,12,3,'#c5a16c');rect(-2,-33,2,18,'#c9b27f');
@@ -182,7 +200,7 @@ function render(){
  left=Math.round(camera.x-viewWidth/2);top=Math.round(camera.y-viewHeight/2);ctx.translate(-left,-top);
  const minX=Math.max(0,Math.floor(left/TILE)),maxX=Math.min(SIZE-1,Math.ceil((left+viewWidth)/TILE)),minY=Math.max(0,Math.floor(top/TILE)),maxY=Math.min(SIZE-1,Math.ceil((top+viewHeight)/TILE));
  for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++){
-  const tile=world.tiles[y*SIZE+x];ctx.drawImage(grassSprites[tile],x*TILE,y*TILE);
+  const tile=world.tiles[y*SIZE+x];ctx.drawImage(grassSprites[tile===5&&exposedRock(world,x,y)?6:tile],x*TILE,y*TILE);
   if(tile===5&&y+1<SIZE&&world.tiles[(y+1)*SIZE+x]===4){ctx.fillStyle='#262d31';ctx.fillRect(x*TILE,y*TILE+22,32,10);ctx.fillStyle='#384043';ctx.fillRect(x*TILE,y*TILE+29,32,3);}
   if(tile===2){ctx.fillStyle='#8b895050';for(const [ox,oy] of [[-1,0],[1,0],[0,-1],[0,1]]){const xx=x+ox,yy=y+oy;if(xx>=0&&yy>=0&&xx<SIZE&&yy<SIZE&&world.tiles[yy*SIZE+xx]!==2){if(ox)ctx.fillRect(x*TILE+(ox>0?29:0),y*TILE,3,32);else ctx.fillRect(x*TILE,y*TILE+(oy>0?29:0),32,3);}}}
  }
@@ -192,7 +210,7 @@ function render(){
  const concealed=new Set(treeConcealed);for(const p of sharedCanopy)concealed.delete(p.id);
  const draws=[];
  for(const tree of world.trees)if(visible(tree.x,tree.y))draws.push({y:tree.y,draw:()=>drawTree(tree)});
- for(const s of world.structures)if(visible(s.x,s.y))draws.push({y:s.y,draw:()=>drawStructure(s)});
+ for(const s of world.structures)if(!world.minedOres?.has(s.id)&&(s.kind!=='ore'||exposedRock(world,Math.floor(s.x/TILE),Math.floor(s.y/TILE)))&&visible(s.x,s.y))draws.push({y:s.y,draw:()=>drawStructure(s)});
  for(const a of creatures)if(visible(a.x,a.y,40))draws.push({y:a.y,draw:()=>{
   shadow(a.x,a.y,17);const flying=['butterfly','bat','ghost'].includes(a.kind),bob=reducedMotion?0:flying?-8+Math.sin(time*3+a.phase)*3:a.walking?Math.sin(time*10+a.phase)*1.1:0;
   drawSprite(walkingSprite(a,a.kind),a.x,a.y,28,spriteFlip(a,a.kind),a.kind==='amy'?0:bob);
@@ -204,7 +222,7 @@ function render(){
  }});
  draws.sort((a,b)=>a.y-b.y||(a.layer||0)-(b.layer||0));for(const d of draws)d.draw();
  drawCanopyPlayers(treeConcealed,sharedCanopy);
- drawHugHearts();
+ drawHugHearts();drawMining();
  drawChatBubbles(concealed);
  ctx.setTransform(1,0,0,1,0,0);
  const nearest=world.settlements.find(v=>Math.hypot(player.x/TILE-v.x,player.y/TILE-v.y)<12);$('#location-name').textContent=world.stage==='mine'?'Mineshaft':nearest?.name||'Deep forest';$('#coordinates').textContent=`${Math.floor(player.x/TILE)}, ${Math.floor(player.y/TILE)}`;
@@ -234,11 +252,11 @@ function drawLocalSilhouette(concealed){
  ctx.restore();
 }
 function showHugNotice(text){const notice=$('#hug-notice');notice.textContent=text;noticeUntil=Date.now()+2200;notice.hidden=false;if(!reducedMotion){notice.getAnimations?.().forEach(a=>a.cancel());notice.animate?.([{opacity:0,offset:0},{opacity:1,offset:.08},{opacity:1,offset:.75},{opacity:0,offset:1}],{duration:2200,fill:'both'});}}
-function offerHug(){if(hugRequests.some(r=>r.from===localId||r.to===localId)||!hugTarget||!joined||!connection?.welcomed||paused||menuOpen||chatOpen||player.hugging)return;connection.send({type:'hug-request',targetId:hugTarget.id});clearInput();canvas.focus();}
+function offerHug(){if(hugRequests.some(r=>r.from===localId||r.to===localId)||!hugTarget||!joined||!connection?.welcomed||paused||menuOpen||chatOpen||inventoryOpen||player.hugging)return;connection.send({type:'hug-request',targetId:hugTarget.id});clearInput();canvas.focus();}
 function respondToHug(accept){if(!currentHugRequest||!connection?.welcomed)return;connection.send({type:'hug-response',requestId:currentHugRequest.id,accept});currentHugRequest=null;$('#hug-prompt').hidden=true;clearInput();canvas.focus();}
 $('#hug-action').onclick=offerHug;$('#hug-accept').onclick=()=>respondToHug(true);$('#hug-deny').onclick=()=>respondToHug(false);
 function updateHugUI(){
- const available=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen;
+ const available=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen;
  hugTarget=available&&!player.hugging?remotePlayers.filter(p=>!p.hugging&&(!hiddenByTrees(world.trees,p)||sharesTreeCover(world.trees,player,p))&&Math.hypot(p.x-player.x,p.y-player.y)<=HUG_RANGE).sort((a,b)=>Math.hypot(a.x-player.x,a.y-player.y)-Math.hypot(b.x-player.x,b.y-player.y))[0]:null;
  const outgoing=hugRequests.find(r=>r.from===localId),action=$('#hug-action');
  action.hidden=!available||!hugTarget||!!outgoing||!!currentHugRequest||!!player.hugging;
@@ -278,7 +296,7 @@ $('#show-overhead-chat').addEventListener('change',saveChatSettings);$('#show-se
 function setChatOpen(value){
  chatOpen=!!value&&joined&&!!connection?.welcomed;
  $('#chat-panel').hidden=!chatOpen;$('#chat-toggle').setAttribute('aria-expanded',String(chatOpen));
- if(chatOpen){menu.open=false;menuOpen=false;clearInput();$('#chat-input').focus();}
+ if(chatOpen){setInventoryOpen(false);menu.open=false;menuOpen=false;clearInput();$('#chat-input').focus();}
 }
 function sendChat(text,clearDraft=false){
  if(!joined||!connection?.welcomed){$('#chat-feedback').textContent='Reconnect to send a message.';return;}
@@ -308,10 +326,72 @@ function drawChatBubbles(concealed=new Set()){
   ctx.fillStyle='#243c35';lines.forEach((line,i)=>ctx.fillText(line,x+8,y+6+i*12));ctx.restore();
  }
 }
-function useNearbyPortal(){if(!joined||!connection?.welcomed||!nearbyPortal||paused||menuOpen||chatOpen||player.hugging)return;clearInput();connection.send({type:'use-portal'});canvas.focus();}
+
+function renderInventory(){
+ const slots=inventorySlots(inventory),signature=JSON.stringify(slots);
+ if($('#inventory-slots').inventorySignature!==signature){
+  $('#inventory-slots').inventorySignature=signature;
+  const cells=slots.map((stack,i)=>{const cell=document.createElement('li');cell.className='inventory-slot';
+   cell.setAttribute('aria-label',stack?`${ORES[stack.type].name}, ${stack.count}, ${ORES[stack.type].rarity}`:`Empty slot ${i+1}`);
+   if(stack){cell.title=`${ORES[stack.type].name} · ${ORES[stack.type].rarity}`;const icon=document.createElement('span');icon.className=`ore-icon ${stack.type}`;icon.setAttribute('aria-hidden','true');cell.appendChild(icon);const count=document.createElement('span');count.className='slot-count';count.textContent=String(stack.count);cell.appendChild(count);}
+   return cell;
+  });$('#inventory-slots').replaceChildren(...cells);
+ }
+ let total=0;for(const type of Object.keys(ORES)){const count=inventory[type]||0;$('#count-'+type).textContent=String(count);total+=count;}
+ $('#inventory-total').textContent=`${total} ore${total===1?'':'s'} · ${slots.filter(Boolean).length} / 25 slots`;
+ $('#inventory-empty').hidden=total>0;
+}
+function setInventoryOpen(value){
+ inventoryOpen=!!value&&joined&&!!connection?.welcomed&&!paused;
+ $('#inventory-panel').hidden=!inventoryOpen;$('#inventory-toggle').setAttribute('aria-expanded',String(inventoryOpen));
+ if(inventoryOpen){setChatOpen(false);menu.open=false;menuOpen=false;clearInput();connection.sendInput({x:0,y:0,run:false});$('#inventory-close').focus();}
+}
+$('#inventory-toggle').onclick=()=>{setInventoryOpen(!inventoryOpen);if(!inventoryOpen)canvas.focus();};
+$('#inventory-close').onclick=()=>{setInventoryOpen(false);canvas.focus();};
+function miningAvailable(){return joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player?.hugging&&world?.stage==='mine';}
+function stopMining(){
+ const old=mouseMining;mouseMining=null;miningTarget=null;
+ if(lastMineKey!==null&&connection?.welcomed)connection.send({type:'mine-target',x:null,y:null});
+ lastMineKey=null;
+ if(old&&canvas.hasPointerCapture?.(old.id))canvas.releasePointerCapture(old.id);
+}
+function updateMining(){
+ if(!miningAvailable()){if(mouseMining||lastMineKey!==null)stopMining();return;}
+ const aim=miningControls?.input()||{x:0,y:0};let target=null;
+ if(aim.x||aim.y)target=miningRay(world,player,aim.x,aim.y);
+ else if(mouseMining){const b=canvas.getBoundingClientRect(),x=Math.floor((left+(mouseMining.clientX-b.left)*canvas.width/b.width/zoom)/TILE),y=Math.floor((top+(mouseMining.clientY-b.top)*canvas.height/b.height/zoom)/TILE);if(canMineBlock(world,player,x,y))target={x,y};}
+ miningTarget=target;const key=target?`${target.x},${target.y}`:null,now=Date.now();
+ if(key!==lastMineKey||(key!==null&&now-lastMineSent>=100)){connection.send({type:'mine-target',x:target?.x??null,y:target?.y??null});lastMineKey=key;lastMineSent=now;}
+}
+function drawMining(){
+ if(world.stage!=='mine')return;
+ if(miningTarget){ctx.strokeStyle='#eddfab';ctx.lineWidth=1;ctx.strokeRect(miningTarget.x*TILE+1,miningTarget.y*TILE+1,TILE-2,TILE-2);}
+ const cracks=[[16,2,14,11],[14,11,20,18],[20,18,17,30],[14,11,5,16],[20,18,29,14],[7,16,9,24],[20,18,26,26]];
+ for(const actor of [...remotePlayers,...(joined?[player]:[])]){
+  const m=actor.mining,e=actor.breakEffect;
+  if(m){ctx.save();ctx.translate(m.x*TILE,m.y*TILE);ctx.strokeStyle='#11191ee0';ctx.lineWidth=1.5;
+   for(const [x,y,xx,yy] of cracks.slice(0,Math.max(1,Math.ceil(m.progress*cracks.length)))){ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(xx,yy);ctx.stroke();}ctx.restore();
+  }
+  if(!m&&(!e||actor.breakUntil<=time))continue;
+  const target=m||e,tx=target.x*TILE+16,ty=target.y*TILE+16,angle=Math.atan2(ty-actor.y,tx-actor.x);
+  ctx.save();ctx.globalAlpha=.35;ctx.translate(actor.x+Math.cos(angle)*15,actor.y-12+Math.sin(angle)*12);
+  ctx.rotate(reducedMotion?angle:angle+(m?Math.sin(time*16)*.85:Math.max(0,.4-(actor.breakUntil-time))*Math.PI*5));
+  // Code-native pixel pickaxe: wooden haft and a stepped steel head.
+  ctx.fillStyle='#8e653e';ctx.fillRect(-2,-4,4,25);ctx.fillStyle='#c69c61';ctx.fillRect(-1,-3,1,22);
+  ctx.fillStyle='#b7c7cb';ctx.fillRect(-13,-8,24,5);ctx.fillRect(-17,-4,6,5);ctx.fillRect(9,-4,6,5);ctx.fillStyle='#e2ebde';ctx.fillRect(-9,-9,16,2);ctx.restore();
+ }
+}
+function updateInventoryUI(){
+ const available=joined&&connection?.welcomed&&!paused&&!menuOpen;
+ $('#inventory-toggle').hidden=!available;
+ if(!available&&inventoryOpen)setInventoryOpen(false);
+ $('#mining-controls').hidden=!miningAvailable();
+}
+
+function useNearbyPortal(){if(!joined||!connection?.welcomed||!nearbyPortal||paused||menuOpen||chatOpen||inventoryOpen||player.hugging)return;clearInput();connection.send({type:'use-portal'});canvas.focus();}
 $('#portal-action').onclick=useNearbyPortal;
 function updatePortalUI(){
- nearbyPortal=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!player.hugging?world.portals.find(portal=>Math.hypot(player.x-portal.x,player.y-portal.y)<=90):null;
+ nearbyPortal=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player.hugging?world.portals.find(portal=>Math.hypot(player.x-portal.x,player.y-portal.y)<=90):null;
  const button=$('#portal-action');button.hidden=!nearbyPortal;
  if(nearbyPortal)button.textContent=world.stage==='forest'?'Enter mine · E':'Exit mine · E';
 }
@@ -324,12 +404,12 @@ function updateMineInfo(){
  bubble.style.left=`${Math.max(width/2+10,Math.min(canvas.width-width/2-10,screenX))}px`;
  bubble.style.top=`${Math.max(12,screenY-100*zoom-height)}px`;
 }
-function frame(now){const dt=Math.min(.04,(now-previous)/1000||0);previous=now;if(ready){time+=dt;if(joined)update(dt);render();updateHugUI();updateChatUI();updateMineInfo();updatePortalUI();}requestAnimationFrame(frame);}
+function frame(now){const dt=Math.min(.04,(now-previous)/1000||0);previous=now;if(ready){time+=dt;if(joined)update(dt);render();updateHugUI();updateChatUI();updateMineInfo();updatePortalUI();updateInventoryUI();}requestAnimationFrame(frame);}
 async function start(){
  try{
   const results=await Promise.all(['./assets/collection.json','./assets/actors.json'].map(async url=>{const res=await fetch(url);if(!res.ok)throw new Error(`Could not load ${url}`);return res.json();}));
   collection=results[0];for(const item of collection)sprites.set(item.id,sprite(item));for(const [id,data] of Object.entries(results[1]))sprites.set(id,sprite(data));
-  makeTextures();let seed='TARIN-01';try{seed=decodeURIComponent(location.hash.slice(1)).trim().slice(0,48)||seed;}catch{}
+  makeTextures();renderInventory();let seed='TARIN-01';try{seed=decodeURIComponent(location.hash.slice(1)).trim().slice(0,48)||seed;}catch{}
   generate(seed);resize();ready=true;$('#loading').hidden=true;$('#login').hidden=false;
   for(const kind of ['tarin','amy']){const portrait=$('#choose-'+kind).getContext('2d');portrait.imageSmoothingEnabled=false;const image=sprites.get(kind);const height=kind==='tarin'?70:56;portrait.drawImage(image,(80-height)/2,80-height,height,height);}
   if(savedProfile?.name){$('#player-name').value=savedProfile.name;const choice=$(`input[name="character"][value="${savedProfile.character==='amy'?'amy':'tarin'}"]`);if(choice)choice.checked=true;}
@@ -353,6 +433,6 @@ connection=new ForestConnection({onRemoved:message=>returnToLogin(message),onCha
  onWelcome(message){if(message.protocolVersion!==PROTOCOL_VERSION){connection.disconnect();returnToLogin(PROTOCOL_ERROR);return;}serverChatMessages=[];savedProfile={name:$('#player-name').value.trim(),character:selectedCharacter,token:message.token};try{sessionStorage.setItem('forest-profile',JSON.stringify(savedProfile));}catch{}localId=message.id;joined=true;rosterSignature='';addServerChat(message.chatHistory||[]);revision=null;$('#login').hidden=true;canvas.setAttribute('aria-label',`Explore as ${selectedCharacter==='amy'?'Amy':'Tarin'}. WASD or arrows to walk, Shift to run. Open the menu for controls.`);$('#join-button').disabled=false;$('#session-name').textContent=`${$('#player-name').value.trim()} · ${selectedCharacter==='amy'?'Amy':'Tarin'}`;setPaused(false);closeMenu();},
  onStatus(status){$('#connection-status').textContent=status;$('#connection-status').hidden=status==='Connected'||!joined;if(status!=='Connected'){clearInput();if(player)player.walking=false;for(const a of remotePlayers)a.walking=false;}},onError:showError});
 $('#join-form').addEventListener('submit',e=>{e.preventDefault();if(!ready)return;const name=$('#player-name').value.trim();if(!name||name.length>24){showError('Enter a name from 1 to 24 characters.');return;}selectedCharacter=$('input[name="character"]:checked').value;$('#join-error').hidden=true;$('#join-button').disabled=true;connection.connect({name,character:selectedCharacter,token:savedProfile?.name===name&&savedProfile?.character===selectedCharacter?savedProfile.token:undefined});});
-function returnToLogin(reason=''){savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}setChatOpen(false);pendingChat=null;lastChatIds.clear();joined=false;serverChatMessages=[];renderServerChat();localId=null;remotePlayers=[];hugRequests=[];currentHugRequest=null;hugEffects.clear();$('#hug-prompt').hidden=true;$('#hug-action').hidden=true;clearInput();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=!reason;$('#join-error').textContent=reason;rosterSignature='';$('#online-list').replaceChildren();$('#player-name').focus();}
+function returnToLogin(reason=''){savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}setInventoryOpen(false);inventory=emptyInventory();renderInventory();$('#inventory-toggle').hidden=true;$('#mining-controls').hidden=true;setChatOpen(false);pendingChat=null;lastChatIds.clear();joined=false;serverChatMessages=[];renderServerChat();localId=null;remotePlayers=[];hugRequests=[];currentHugRequest=null;hugEffects.clear();$('#hug-prompt').hidden=true;$('#hug-action').hidden=true;clearInput();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=!reason;$('#join-error').textContent=reason;rosterSignature='';$('#online-list').replaceChildren();$('#player-name').focus();}
 $('#logout').onclick=()=>{connection.disconnect();returnToLogin();};
 start();

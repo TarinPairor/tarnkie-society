@@ -40,3 +40,17 @@ export function createTouchControls({joystick,thumb,sprint,enabled}){
  }
  display();return {input:()=>({x,y,run}),reset};
 }
+
+// Separate pointer capture lets the left thumb walk while the right thumb mines.
+export function createMiningJoystick({joystick,thumb,enabled}){
+ let pointer=null,vector={x:0,y:0};
+ function display(v){thumb.style.transform=`translate(${v.thumbX||0}px, ${v.thumbY||0}px)`;}
+ function reset(){const old=pointer;pointer=null;vector={x:0,y:0};display({});if(old!==null&&joystick.hasPointerCapture?.(old))joystick.releasePointerCapture(old);}
+ function move(e){if(e.pointerId!==pointer)return;if(!enabled()){reset();return;}const b=joystick.getBoundingClientRect(),v=joystickVector(e.clientX-b.left-b.width/2,e.clientY-b.top-b.height/2,Math.min(b.width,b.height)*.3);vector={x:v.x,y:v.y};display(v);}
+ joystick.addEventListener('pointerdown',e=>{e.preventDefault();if(!enabled()||pointer!==null||e.button>0)return;pointer=e.pointerId;joystick.setPointerCapture(pointer);move(e);});
+ joystick.addEventListener('pointermove',move);
+ for(const event of ['pointerup','pointercancel','lostpointercapture'])joystick.addEventListener(event,e=>{if(e.pointerId===pointer)reset();});
+ for(const event of ['contextmenu','selectstart','dragstart'])joystick.addEventListener(event,e=>e.preventDefault());
+ joystick.addEventListener('touchstart',e=>e.preventDefault(),{passive:false});
+ display({});return {input:()=>vector,reset};
+}

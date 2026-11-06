@@ -1,3 +1,4 @@
+import {rollOre} from './items.js';
 export const TILE=32, SIZE=144;
 export const MINE_ENTRANCE=Object.freeze({x:86,y:60});
 export function randomFromSeed(seed){let value=2166136261;for(const c of String(seed)){value^=c.charCodeAt(0);value=Math.imul(value,16777619);}return ()=>{value+=0x6D2B79F5;let t=value;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return ((t^(t>>>14))>>>0)/4294967296;};}
@@ -135,8 +136,12 @@ export function makeCave(seed='TARIN-01'){
  for(let i=0;i<queue.length;i++){const index=queue[i],x=index%SIZE,y=Math.floor(index/SIZE);for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const xx=x+dx,yy=y+dy,next=yy*SIZE+xx;if(xx<0||yy<0||xx>=SIZE||yy>=SIZE||blocked[next]||visited[next]||!canStand({blocked},xx*TILE+16,yy*TILE+16,7)||!canStand({blocked},(x+xx)*TILE/2+16,(y+yy)*TILE/2+16,7))continue;visited[next]=1;queue.push(next);}}
  for(let i=0;i<tiles.length;i++)if(!blocked[i]&&!visited[i]){blocked[i]=1;tiles[i]=5;}
  structures.push({kind:'mine-exit',x:15*TILE+16,y:15*TILE+16});
- for(let i=0;i<1000;i++){const x=4+Math.floor(random()*(SIZE-8)),y=4+Math.floor(random()*(SIZE-8));if(blocked[y*SIZE+x]&&[[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy])=>!blocked[(y+dy)*SIZE+x+dx]))structures.push({kind:'ore',x:x*TILE+16,y:y*TILE+20,variant:Math.floor(random()*3)});}
- return {seed,stage:'mine',tiles,blocked,trees:[],decor:[],structures,settlements:[],rooms,passages,portals:[{x:15*TILE+16,y:15*TILE+16,target:'forest',halfWidth:22,front:28,back:24}],spawn:{x:15*TILE+16,y:19*TILE+16}};
+ // Ore is also buried inside solid rock; only exposed veins will be rendered.
+ const oreRandom=randomFromSeed(seed+'-ore');
+ for(let y=3;y<SIZE-3;y++)for(let x=3;x<SIZE-3;x++)if(blocked[y*SIZE+x]&&oreRandom()<.065){
+  structures.push({id:`ore-${x}-${y}`,kind:'ore',oreType:rollOre(oreRandom()),x:x*TILE+16,y:y*TILE+20});
+ }
+ return {seed,stage:'mine',minedOres:new Set(),brokenBlocks:new Set(),tiles,blocked,trees:[],decor:[],structures,settlements:[],rooms,passages,portals:[{x:15*TILE+16,y:15*TILE+16,target:'forest',halfWidth:22,front:28,back:24}],spawn:{x:15*TILE+16,y:19*TILE+16}};
 }
 
 export function insidePortal(portal,actor){

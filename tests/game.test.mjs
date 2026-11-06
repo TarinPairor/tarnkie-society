@@ -1,3 +1,5 @@
+import {ORES,emptyInventory,inventorySlots} from '../items.js';
+import {canMineOre,canMineBlock,exposedRock,miningRay,applyBrokenBlocks,MINING_REACH} from '../mining.js';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -8,7 +10,7 @@ import {MINE_INFO,mineEntranceAt} from '../mine-info.js';
 import * as engine from '../world.js';
 import {advanceWalk,walkingSprite,spriteFlip} from '../animation.js';
 import {ForestConnection} from '../network.js';
-import {createTouchControls} from '../touch.js';
+import {createTouchControls,createMiningJoystick} from '../touch.js';
 import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,sharesTreeCover} from '../trees.js';
 import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory} from '../chat.js';
 import {HUG_RANGE,HUG_DURATION} from '../hug-config.js';
@@ -55,7 +57,7 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  const context=new Proxy({measureText:()=>({width:24})},{get:(o,k)=>o[k]||(()=>{}),set:(o,k,v)=>(o[k]=v,true)});
  function element(selector){if(!elements.has(selector))elements.set(selector,{width:800,height:500,value:'TARIN-01',hidden:false,style:{},tagName:'CANVAS',handlers:{},classList:{add(){}},getContext:()=>context,getBoundingClientRect:()=>({width:1000,height:600}),setAttribute(){},appendChild(child){(this.children??=[]).push(child);},replaceChildren(...children){this.children=children;},focus(){this.focused=true;},setPointerCapture(){},addEventListener(n,fn){this.handlers[n]=fn;}});return elements.get(selector);}
  const windowEvents={};
- const sandbox={PROTOCOL_VERSION,PROTOCOL_ERROR,applyCaveTerrain,packCaveTerrain,MINE_INFO,mineEntranceAt,TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,sharesTreeCover,QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory,HUG_RANGE,HUG_DURATION,...engine,advanceWalk,walkingSprite,spriteFlip,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
+ const sandbox={ORES,emptyInventory,inventorySlots,canMineOre,canMineBlock,exposedRock,miningRay,applyBrokenBlocks,MINING_REACH,createMiningJoystick,PROTOCOL_VERSION,PROTOCOL_ERROR,applyCaveTerrain,packCaveTerrain,MINE_INFO,mineEntranceAt,TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,sharesTreeCover,QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory,HUG_RANGE,HUG_DURATION,...engine,advanceWalk,walkingSprite,spriteFlip,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
  vm.createContext(sandbox);
  const code=readFileSync(new URL('../game.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/start\(\);\s*$/,'globalThis.started=start();');
  vm.runInContext(code,sandbox);await sandbox.started;
@@ -171,6 +173,26 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
   state.stage='mine';state.worldSeed=authoritative.seed;state.terrain=packCaveTerrain(authoritative);receiveState(state);
   globalThis.terrainMatches=world.tiles.every((v,i)=>v===authoritative.tiles[i])&&world.blocked.every((v,i)=>v===authoritative.blocked[i]);makeCave=originalGenerator;
  `,sandbox);assert.equal(sandbox.terrainMatches,true);
+ windowEvents.keydown({key:'i',target:{tagName:'CANVAS'},preventDefault(){}});assert.equal(element('#inventory-panel').hidden,false);assert.equal(sandbox.sentInput.x,0);
+ vm.runInContext(`keys.add('d');update(.04);`,sandbox);assert.equal(sandbox.sentInput.x,0);
+ windowEvents.keydown({key:'i',target:{tagName:'BUTTON'},preventDefault(){}});assert.equal(element('#inventory-panel').hidden,true);
+ element('#inventory-toggle').onclick();assert.equal(element('#inventory-panel').hidden,false);
+ windowEvents.keydown({key:'Escape',target:{tagName:'BUTTON'},preventDefault(){}});assert.equal(element('#inventory-panel').hidden,true);
+ vm.runInContext(`
+  state.inventory={copper:3,iron:2,gold:1};state.minedOres=[];delete state.terrain;receiveState(state);
+  const vein=world.structures.find(s=>s.kind==='ore'&&exposedRock(world,Math.floor(s.x/TILE),Math.floor(s.y/TILE)));
+  const vx=Math.floor(vein.x/TILE),vy=Math.floor(vein.y/TILE);
+  const adjacent=[[1,0],[-1,0],[0,1],[0,-1]].find(([dx,dy])=>!world.blocked[(vy+dy)*SIZE+vx+dx]);
+  player.x=(vx+adjacent[0])*TILE+16;player.y=(vy+adjacent[1])*TILE+16;
+  left=vx*TILE-100;top=vy*TILE-100;connection.send=m=>globalThis.miningMessage=m;
+  canvas.getBoundingClientRect=()=>({left:0,top:0,width:400,height:400});canvas.width=400;canvas.height=400;
+  globalThis.minedIndex=vy*SIZE+vx;
+ `,sandbox);
+ assert.equal(element('#count-copper').textContent,'3');assert.equal(element('#count-gold').textContent,'1');assert.equal(element('#inventory-total').textContent,'6 ores · 3 / 25 slots');assert.equal(element('#inventory-slots').children.length,25);
+ element('#game').handlers.pointerdown({clientX:185.6,clientY:185.6,pointerType:'mouse',button:0,pointerId:4,preventDefault(){}});
+ assert.equal(sandbox.miningMessage.type,'mine-target');assert(Number.isInteger(sandbox.miningMessage.x));
+ element('#game').handlers.pointerup({pointerId:4});assert.equal(sandbox.miningMessage.x,null);
+ vm.runInContext(`state.brokenBlocks=[minedIndex];receiveState(state);render();globalThis.opened=world.blocked[minedIndex]===0&&world.tiles[minedIndex]===4;`,sandbox);assert.equal(sandbox.opened,true);
  vm.runInContext(`returnToLogin('You were removed by the host.');`,sandbox);assert.equal(element('#login').hidden,false);assert.equal(element('#join-error').hidden,false);assert.match(element('#join-error').textContent,/removed/);
 
  vm.runInContext(`connection.onWelcome({id:'outdated',token:'invalid',protocolVersion:0});`,sandbox);assert.equal(element('#login').hidden,false);assert.match(element('#join-error').textContent,/updated/);
