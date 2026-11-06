@@ -111,6 +111,9 @@ test('real WebSocket clients transition between mine and forest without seeing p
  const pa=game.room.sessions.get(wa.token),pb=game.room.sessions.get(wb.token);
  const doorway=game.room.world.portals[0];Object.assign(pa,{x:doorway.x,y:doorway.y+60});a.send({type:'use-portal'});await waitFor(()=>states.a.stage==='mine'&&states.b.players.length===1);
  assert.equal(states.a.players.length,1);assert.equal(states.b.stage,'forest');assert.equal(states.a.creatures.length,0);
+ a.sendInput({x:0,y:0,run:false,view:{x:pa.x-250,y:pa.y-180,width:500,height:360,stage:'mine',seed:game.room.worldFor(pa).seed}});
+ await waitFor(()=>states.a.creatures.length>0);assert(states.a.creatures.every(c=>c.kind==='spider'&&c.stage==='mine'));assert(!states.b.creatures.some(c=>c.id.startsWith('cave-creature-')));
+
  assert.equal(terrainPackets.a.length,1);assert.equal(terrainPackets.a[0].seed,game.room.worldFor(pa).seed);assert.equal(terrainPackets.b.length,0);
  a.send({type:'chat',text:'Inside the mineshaft'});await waitFor(()=>chat.some(m=>m.text==='Inside the mineshaft'));
  Object.assign(pb,game.room.world.portals[0]);await waitFor(()=>states.a.players.length===2&&states.b.stage==='mine');

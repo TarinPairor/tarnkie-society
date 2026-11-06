@@ -1,5 +1,6 @@
 import {rollOre} from './items.js';
 export const TILE=32, SIZE=144;
+export const WALK_SPEED=100,SPRINT_SPEED=170;
 export const MINE_ENTRANCE=Object.freeze({x:86,y:60});
 export function randomFromSeed(seed){let value=2166136261;for(const c of String(seed)){value^=c.charCodeAt(0);value=Math.imul(value,16777619);}return ()=>{value+=0x6D2B79F5;let t=value;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return ((t^(t>>>14))>>>0)/4294967296;};}
 export function makeWorld(seed='TARIN-01'){

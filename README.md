@@ -114,3 +114,11 @@ Press I or tap the backpack button on a phone to see a single row of five invent
 Set `GAME_DATA_DIR` to change the save directory. On Render, attach a persistent disk at `/var/data` and set `GAME_DATA_DIR=/var/data`. Only files under the disk mount survive service redeploys/restarts, and persistent disks require a paid service ([Render persistent disk documentation](https://render.com/docs/disks)). Without a persistent disk, logout/rejoin still restores character inventories while that server instance is running, but Render can discard the save on restart or redeploy.
 
 The programmatic `createGameServer()` factory also uses disk persistence by default, following `GAME_DATA_DIR`. Tests explicitly pass an isolated `new InventoryStore()` in memory. The `ForestRoom` simulation defaults to an in-memory store; pass an `InventoryStore` with a `filePath` when using the simulation directly.
+
+## Cave spiders
+
+Each cave instance has at most two rare Cave spiders, using the existing monster sprite. They spawn once in the larger natural chambers (at least five tiles across, with open neighboring floor), away from the entrance and at least 20 tiles apart. Spawning waits until every current miner has reported their cave camera bounds; spawn points must lie outside all of those viewports with a two-tile margin. There are no recurring on-screen spawns or monster spawns in narrow tunnels.
+
+Spiders idle and wander like overworld animals. A spider starts following the nearest player within 15 tiles and keeps its current target until that player moves beyond 20 tiles, disconnects, or leaves that cave instance. Pursuit speed is one-third of player sprint speed (170 / 3 ≈ 56.7 world pixels per second). They find paths around walls through narrow tunnels and update those routes as players move or mining opens passages. They stop close to the player and do not attack.
+
+Cave AI runs on the server and is shared with everyone in the same mine instance. Miners in older cave instances keep their own monster population; monsters never target players in another mine or the overworld. Returning to a freshly generated cave gets a new, separate population.

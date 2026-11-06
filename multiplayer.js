@@ -1,10 +1,11 @@
+import {makeCaveMonsters,updateCaveMonster} from './cave-ai.js';
 import {InventoryStore} from './inventory-store.mjs';
 import {ORES} from './items.js';
 import {canMineBlock,MINING_SECONDS,ORE_MINING_SECONDS} from './mining.js';
 import {cleanChat,CHAT_DURATION,CHAT_COOLDOWN,CHAT_HISTORY_LIMIT} from './chat.js';
 import {Hugs} from './hugs.js';
 import {randomUUID} from 'node:crypto';
-import {TILE,SIZE,makeWorld,makeCave,makeCreatures,insidePortal,moveActor,updateCreature} from './world.js';
+import {TILE,SIZE,WALK_SPEED,SPRINT_SPEED,makeWorld,makeCave,makeCreatures,insidePortal,moveActor,updateCreature} from './world.js';
 import {advanceWalk} from './animation.js';
 
 export class ForestRoom {
@@ -13,7 +14,7 @@ export class ForestRoom {
   this.types=types;this.now=now;this.sessions=new Map();this.sequence=0;this.chatHistory=[];this.hugs=new Hugs(this);this.reset(seed);
  }
  reset(seed){this.hugs.reset();this.world=makeWorld(seed);this.mineVersion=0;this.mineWorlds=new Map([[0,makeCave(seed)]]);this.worlds={forest:this.world,mine:this.mineWorlds.get(0)};this.creatures=makeCreatures(this.world,this.types);this.sequence++;
-  for(const p of this.sessions.values()){Object.assign(p,this.world.spawn,{stage:'forest',mineVersion:null,walking:false,walkDistance:0,input:{x:0,y:0,run:false},mining:null,breakEffect:null,chat:null});}
+  for(const p of this.sessions.values()){Object.assign(p,this.world.spawn,{stage:'forest',mineVersion:null,view:null,walking:false,walkDistance:0,input:{x:0,y:0,run:false},mining:null,breakEffect:null,chat:null});}
  }
  join({name,character,token},connection){
   if(typeof name!=='string'||!name.trim()||name.trim().length>24||/[\u0000-\u001f\u007f]/.test(name))throw new Error('Enter a name from 1 to 24 characters.');
@@ -23,7 +24,7 @@ export class ForestRoom {
   if([...this.sessions.values()].some(other=>other!==p&&other.name.toLowerCase()===name.toLowerCase()))throw new Error('That name is already in the forest. Choose another.');
   if([...this.sessions.values()].some(other=>other!==p&&other.connection&&other.kind===character)){const label=character==='amy'?'Amy':'Tarin';throw new Error(`${label} is already being played. Choose the other character or wait until ${label} leaves.`);}
   if(!p){if(this.sessions.size>=64)throw new Error('The forest is full. Try again shortly.');p={id:randomUUID(),token:randomUUID(),...this.world.spawn,stage:'forest',radius:7,walkDistance:0,walking:false,flip:false};this.sessions.set(p.token,p);}
-  Object.assign(p,{name,kind:character,inventory:this.characterInventories[character],connection,mining:null,breakEffect:null,input:{x:0,y:0,run:false},inputAt:this.now(),disconnectedAt:null});
+  Object.assign(p,{name,kind:character,inventory:this.characterInventories[character],connection,view:null,mining:null,breakEffect:null,input:{x:0,y:0,run:false},inputAt:this.now(),disconnectedAt:null});
   return p;
  }
  saveInventory(p){if(p&&this.sessions.get(p.token)===p){try{this.inventoryStore.save(p.kind,p.inventory);}catch(error){this.onInventoryError(p,error);}}}
@@ -37,7 +38,13 @@ export class ForestRoom {
   this.logout(target);return target;
  }
  hostId(){return [...this.sessions.values()].find(p=>p.connection)?.id||null;}
- input(p,message){if(p?.hugId)return;if(!p||!Number.isFinite(message.x)||!Number.isFinite(message.y)||Math.abs(message.x)>1||Math.abs(message.y)>1)return;
+ input(p,message){
+  const v=message.view,world=p?this.worldFor(p):null;
+  if(p&&v&&v.stage===p.stage&&v.seed===world?.seed&&['x','y','width','height'].every(key=>Number.isFinite(v[key]))&&v.width>0&&v.height>0){
+   const width=Math.min(SIZE*TILE,v.width),height=Math.min(SIZE*TILE,v.height);
+   p.view={x:Math.max(0,Math.min(SIZE*TILE-width,v.x)),y:Math.max(0,Math.min(SIZE*TILE-height,v.y)),width,height};
+  }
+  if(p?.hugId)return;if(!p||!Number.isFinite(message.x)||!Number.isFinite(message.y)||Math.abs(message.x)>1||Math.abs(message.y)>1)return;
   p.input={x:message.x,y:message.y,run:message.run===true};p.inputAt=this.now();
  }
  chat(p,text){
@@ -93,7 +100,7 @@ export class ForestRoom {
   const leavingMine=p.stage==='mine'&&target==='forest';
   this.hugs.cancel(p.id);p.stage=target;p.mineVersion=target==='mine'?this.mineVersion:null;
   const spawn=target==='forest'?{x:this.world.portals[0].x,y:this.world.portals[0].y+3*TILE}:destination.spawn;
-  Object.assign(p,spawn,{walking:false,walkDistance:0,mining:null,breakEffect:null,chat:null,input:{x:0,y:0,run:false},portalCooldown:this.now()+1200});
+  Object.assign(p,spawn,{walking:false,walkDistance:0,view:null,mining:null,breakEffect:null,chat:null,input:{x:0,y:0,run:false},portalCooldown:this.now()+1200});
   if(leavingMine)this.refreshMine();
  }
 
@@ -101,15 +108,22 @@ export class ForestRoom {
   for(const p of this.sessions.values()){
    if(!p.connection){if(this.now()-p.disconnectedAt>15000)this.sessions.delete(p.token);continue;}
    if(p.hugId){p.walking=false;p.mining=null;continue;}
-   const input=this.now()-p.inputAt>300?{x:0,y:0,run:false}:p.input,length=Math.hypot(input.x,input.y),speed=input.run?170:100,x=p.x,y=p.y;
+   const input=this.now()-p.inputAt>300?{x:0,y:0,run:false}:p.input,length=Math.hypot(input.x,input.y),speed=input.run?SPRINT_SPEED:WALK_SPEED,x=p.x,y=p.y;
    p.walking=length>0&&moveActor(this.worldFor(p),p,input.x/Math.max(1,length)*speed*dt,input.y/Math.max(1,length)*speed*dt);if(input.x)p.flip=input.x<0;
    advanceWalk(p,Math.hypot(p.x-x,p.y-y));this.advanceMining(p,dt);
    if(this.now()>=(p.portalCooldown||0)){const portal=this.worldFor(p).portals.find(portal=>insidePortal(portal,p));if(portal)this.changeStage(p,portal.target);}
   }
   this.pruneMines();
+  for(const [version,cave] of this.mineWorlds){
+   const players=[...this.sessions.values()].filter(p=>p.connection&&p.stage==='mine'&&p.mineVersion===version);
+   if(!players.length)continue;
+   // Wait for the actual cave camera bounds before choosing off-screen spawn points.
+   if(!cave.creatures&&players.every(p=>p.view))cave.creatures=makeCaveMonsters(cave,this.types,players);
+   for(const actor of cave.creatures||[]){const x=actor.x,y=actor.y;updateCaveMonster(cave,actor,players,dt);advanceWalk(actor,Math.hypot(actor.x-x,actor.y-y));}
+  }
   for(const a of this.creatures){const x=a.x,y=a.y;updateCreature(this.world,a,dt);advanceWalk(a,Math.hypot(a.x-x,a.y-y));}
  }
  snapshot(forId){const viewer=[...this.sessions.values()].find(p=>p.id===forId),stage=viewer?.stage||'forest';const visible=a=>({id:a.id,name:a.name,kind:a.kind,stage:a.stage||'forest',x:a.x,y:a.y,walking:a.walking,walkDistance:a.walkDistance||0,flip:a.flip,phase:a.phase||0,hugging:!!a.hugId,mining:a.mining?{x:a.mining.x,y:a.mining.y,progress:a.mining.progress}:null,breakEffect:a.breakEffect?.until>this.now()?{x:a.breakEffect.x,y:a.breakEffect.y,remainingMs:a.breakEffect.until-this.now()}:null,chat:a.chat&&a.chat.expiresAt>this.now()?{id:a.chat.id,text:a.chat.text,remainingMs:a.chat.expiresAt-this.now()}:null});
-  return {type:'state',stage,brokenBlocks:stage==='mine'?[...this.worldFor(viewer).brokenBlocks]:[],inventory:viewer?{...viewer.inventory}:null,minedOres:stage==='mine'?[...this.worldFor(viewer).minedOres]:[],onlinePlayers:[...this.sessions.values()].filter(p=>p.connection).map(p=>({id:p.id,name:p.name,kind:p.kind,stage:p.stage||'forest'})),onlineCount:[...this.sessions.values()].filter(p=>p.connection).length,...this.hugs.snapshot(forId),seed:this.world.seed,worldSeed:this.worldFor(viewer).seed,revision:this.sequence,hostId:this.hostId(),players:[...this.sessions.values()].filter(p=>p.connection&&(p.stage||'forest')===stage&&(stage!=='mine'||p.mineVersion===viewer?.mineVersion)).map(visible),creatures:(stage==='forest'?this.creatures:[]).map((a,i)=>({...visible(a),id:`creature-${i}`}))};
+  return {type:'state',stage,brokenBlocks:stage==='mine'?[...this.worldFor(viewer).brokenBlocks]:[],inventory:viewer?{...viewer.inventory}:null,minedOres:stage==='mine'?[...this.worldFor(viewer).minedOres]:[],onlinePlayers:[...this.sessions.values()].filter(p=>p.connection).map(p=>({id:p.id,name:p.name,kind:p.kind,stage:p.stage||'forest'})),onlineCount:[...this.sessions.values()].filter(p=>p.connection).length,...this.hugs.snapshot(forId),seed:this.world.seed,worldSeed:this.worldFor(viewer).seed,revision:this.sequence,hostId:this.hostId(),players:[...this.sessions.values()].filter(p=>p.connection&&(p.stage||'forest')===stage&&(stage!=='mine'||p.mineVersion===viewer?.mineVersion)).map(visible),creatures:(stage==='forest'?this.creatures:(this.worldFor(viewer).creatures||[])).map((a,i)=>({...visible(a),id:a.id||`creature-${i}`}))};
  }
 }

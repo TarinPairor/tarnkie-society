@@ -121,7 +121,7 @@ function update(dt){
  const enabled=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player.hugging;
  const touch=touchControls.input(),keyboardX=(keys.has('d')||keys.has('arrowright')?1:0)-(keys.has('a')||keys.has('arrowleft')?1:0),keyboardY=(keys.has('s')||keys.has('arrowdown')?1:0)-(keys.has('w')||keys.has('arrowup')?1:0);
  const keyboardMoving=keyboardX!==0||keyboardY!==0;
- connection?.sendInput({x:enabled?(keyboardMoving?keyboardX:touch.x):0,y:enabled?(keyboardMoving?keyboardY:touch.y):0,run:enabled&&(keys.has('shift')||touch.run)});
+ connection?.sendInput({x:enabled?(keyboardMoving?keyboardX:touch.x):0,y:enabled?(keyboardMoving?keyboardY:touch.y):0,run:enabled&&(keys.has('shift')||touch.run),view:{x:Math.max(0,Math.round((camera.x-viewWidth/2)/TILE)*TILE),y:Math.max(0,Math.round((camera.y-viewHeight/2)/TILE)*TILE),width:Math.ceil(viewWidth),height:Math.ceil(viewHeight),stage:world.stage,seed:world.seed}});
  const blend=1-Math.exp(-dt*22);
  for(const actor of [player,...remotePlayers,...creatures]){if(actor.targetX!==undefined){actor.x+=(actor.targetX-actor.x)*blend;actor.y+=(actor.targetY-actor.y)*blend;}}
  const smoothing=reducedMotion?1:1-Math.exp(-dt*9);camera.x+=(player.x-camera.x)*smoothing;camera.y+=(player.y-camera.y)*smoothing;
