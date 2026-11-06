@@ -16,6 +16,7 @@ let world,creatures=[],player,collection=[],camera={x:0,y:0},paused=false,ready=
 let mineInfoAnchor=null,mineInfoUntil=0,nearbyPortal=null;
 let inventoryOpen=false,inventory=emptyInventory();
 let miningControls=null,mouseMining=null,miningTarget=null,lastMineKey=null,lastMineSent=0;
+let deathOpen=false,respawnPending=false,droppedLoot=[];
 let rosterSignature='';
 let menuOpen=false,connection=null,joined=false,localId=null,revision=null,remotePlayers=[];
 let hugRequests=[],hugEffects=new Map(),currentHugRequest=null,hugTarget=null,lastHugNotice=null,noticeUntil=0,lastOutgoingHug=null;
@@ -76,7 +77,7 @@ function generate(seed,stage='forest',terrain=null){
 }
 function resize(){const r=canvas.getBoundingClientRect();canvas.width=Math.max(1,Math.round(r.width));canvas.height=Math.max(1,Math.round(r.height));viewWidth=canvas.width/zoom;viewHeight=canvas.height/zoom;ctx.imageSmoothingEnabled=false;}
 new ResizeObserver(resize).observe(canvas);
-function setPaused(value){if(value){setChatOpen(false);setInventoryOpen(false);}paused=value;clearInput();$('#paused').hidden=!value;$('#pause').setAttribute('aria-pressed',String(value));$('#pause').innerHTML=`${value?'Resume':'Pause'} <kbd>P</kbd>`;}
+function setPaused(value){if(value&&player?.dead)return;if(value){setChatOpen(false);setInventoryOpen(false);}paused=value;clearInput();$('#paused').hidden=!value;$('#pause').setAttribute('aria-pressed',String(value));$('#pause').innerHTML=`${value?'Resume':'Pause'} <kbd>P</kbd>`;}
 $('#pause').onclick=()=>{if(ready){setPaused(!paused);if(paused)closeMenu();}};$('#resume').onclick=()=>{setPaused(false);closeMenu();};
 function toggleMap(){mapVisible=!mapVisible;$('#map-panel').hidden=!mapVisible;$('#show-map').innerHTML=`${mapVisible?'Hide':'Show'} map <kbd>M</kbd>`;$('#show-map').setAttribute('aria-pressed',String(mapVisible));}
 $('#toggle-map').onclick=toggleMap;$('#show-map').onclick=toggleMap;
@@ -84,6 +85,7 @@ $('#seed-form').addEventListener('submit',e=>{e.preventDefault();showHugNotice('
 $('#random-seed').onclick=()=>{showHugNotice('Forest changes are temporarily disabled.');};
 window.addEventListener('keydown',e=>{
  if(!joined||typeof e.key!=='string')return;
+ if(player?.dead){if(e.key==='Escape')e.preventDefault();return;}
  if(e.key==='Escape'&&inventoryOpen){e.preventDefault();setInventoryOpen(false);canvas.focus();return;}
  if(e.key.toLowerCase()==='i'&&!e.repeat&&!['INPUT','TEXTAREA','SELECT'].includes(e.target?.tagName)){e.preventDefault();setInventoryOpen(!inventoryOpen);if(!inventoryOpen)canvas.focus();return;}
  if(e.key==='Escape'&&chatOpen){e.preventDefault();setChatOpen(false);canvas.focus();return;}
@@ -101,6 +103,7 @@ window.addEventListener('keydown',e=>{
 });
 window.addEventListener('keyup',e=>{if(typeof e.key==='string')keys.delete(e.key.toLowerCase());});window.addEventListener('blur',()=>{if(ready)setPaused(true);});document.addEventListener('visibilitychange',()=>{if(document.hidden&&ready)setPaused(true);});
 canvas.addEventListener('pointerdown',event=>{
+ if(player?.dead)return;
  setInventoryOpen(false);setChatOpen(false);closeMenu();mineInfoAnchor=null;$('#mine-info').hidden=true;
  if(!joined)return;
  const bounds=canvas.getBoundingClientRect(),x=left+(event.clientX-bounds.left)*canvas.width/bounds.width/zoom,y=top+(event.clientY-bounds.top)*canvas.height/bounds.height/zoom;
@@ -111,14 +114,14 @@ canvas.addEventListener('pointermove',event=>{if(mouseMining?.id===event.pointer
 for(const name of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(name,event=>{if(mouseMining?.id===event.pointerId)stopMining();});
 canvas.addEventListener('contextmenu',event=>{if(world?.stage==='mine')event.preventDefault();});
 $('#seed').addEventListener('focus',()=>keys.clear());
-touchControls=createTouchControls({joystick:$('#joystick'),thumb:$('#joystick-thumb'),sprint:$('#sprint'),enabled:()=>joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player?.hugging});
+touchControls=createTouchControls({joystick:$('#joystick'),thumb:$('#joystick-thumb'),sprint:$('#sprint'),enabled:()=>joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player?.dead&&!player?.hugging});
 miningControls=createMiningJoystick({joystick:$('#mining-joystick'),thumb:$('#mining-thumb'),enabled:()=>miningAvailable()});
 window.addEventListener('resize',clearInput);
 window.addEventListener('orientationchange',clearInput);
 
 function update(dt){
  updateMining();
- const enabled=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player.hugging;
+ const enabled=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player.dead&&!player.hugging;
  const touch=touchControls.input(),keyboardX=(keys.has('d')||keys.has('arrowright')?1:0)-(keys.has('a')||keys.has('arrowleft')?1:0),keyboardY=(keys.has('s')||keys.has('arrowdown')?1:0)-(keys.has('w')||keys.has('arrowup')?1:0);
  const keyboardMoving=keyboardX!==0||keyboardY!==0;
  connection?.sendInput({x:enabled?(keyboardMoving?keyboardX:touch.x):0,y:enabled?(keyboardMoving?keyboardY:touch.y):0,run:enabled&&(keys.has('shift')||touch.run),view:{x:Math.max(0,Math.round((camera.x-viewWidth/2)/TILE)*TILE),y:Math.max(0,Math.round((camera.y-viewHeight/2)/TILE)*TILE),width:Math.ceil(viewWidth),height:Math.ceil(viewHeight),stage:world.stage,seed:world.seed}});
@@ -132,13 +135,14 @@ function receiveState(state){
  const worldSeed=state.worldSeed||state.seed;
  const reset=!!state.terrain||revision!==state.revision||world.seed!==worldSeed||world.stage!==(state.stage||'forest');
  if(reset){generate(worldSeed,state.stage||'forest',state.terrain);revision=state.revision;hugEffects.clear();mineInfoAnchor=null;$('#mine-info').hidden=true;}
- function merge(old,next){const existing=new Map(old.map(a=>[a.id,a]));return next.map(a=>{const previous=existing.get(a.id);return {...a,x:!reset&&previous?previous.x:a.x,y:!reset&&previous?previous.y:a.y,targetX:a.x,targetY:a.y,breakUntil:time+(a.breakEffect?.remainingMs||0)/1000,chatUntil:time+(a.chat?.remainingMs||0)/1000};});}
+ function merge(old,next){const existing=new Map(old.map(a=>[a.id,a]));return next.map(a=>{const previous=existing.get(a.id),snap=reset||previous?.dead&&!a.dead;return {...a,x:!snap&&previous?previous.x:a.x,y:!snap&&previous?previous.y:a.y,targetX:a.x,targetY:a.y,breakUntil:time+(a.breakEffect?.remainingMs||0)/1000,chatUntil:time+(a.chat?.remainingMs||0)/1000};});}
  const self=state.players.find(a=>a.id===localId);if(!self)return;
- const oldSelf=player;if(self.hugging&&!oldSelf.hugging)clearInput();player={...self,x:reset?self.x:oldSelf.x,y:reset?self.y:oldSelf.y,targetX:self.x,targetY:self.y,breakUntil:time+(self.breakEffect?.remainingMs||0)/1000,chatUntil:time+(self.chat?.remainingMs||0)/1000};
+ const oldSelf=player,teleport=reset||oldSelf.dead&&!self.dead;if(self.hugging&&!oldSelf.hugging)clearInput();player={...self,x:teleport?self.x:oldSelf.x,y:teleport?self.y:oldSelf.y,targetX:self.x,targetY:self.y,breakUntil:time+(self.breakEffect?.remainingMs||0)/1000,chatUntil:time+(self.chat?.remainingMs||0)/1000};
+ droppedLoot=state.drops||[];
  inventory={...emptyInventory(),...state.inventory};world.minedOres=new Set(state.minedOres||[]);
  for(const index of applyBrokenBlocks(world,state.brokenBlocks)){mapBackgroundCtx.fillStyle='#a9ada9';mapBackgroundCtx.fillRect(index%SIZE,Math.floor(index/SIZE),1,1);}
  renderInventory();
- if(reset)camera={x:self.x,y:self.y};
+ if(teleport)camera={x:self.x,y:self.y};
  remotePlayers=merge(remotePlayers,state.players.filter(a=>a.id!==localId));creatures=merge(creatures,state.creatures);
  $('#player-count').textContent=`${state.players.length} in this area · ${state.onlineCount??state.players.length} online`;
  renderOnlinePlayers(state.onlinePlayers||state.players,state.hostId);
@@ -156,8 +160,7 @@ function receiveState(state){
  for(const p of state.players){if(p.chat&&lastChatIds.get(p.id)!==p.chat.id){lastChatIds.set(p.id,p.chat.id);$('#chat-announcement').textContent=`${p.name}: ${p.chat.text}`;}}
  for(const id of lastChatIds.keys())if(!state.players.some(p=>p.id===id))lastChatIds.delete(id);
  if(pendingChat&&self.chat?.text===pendingChat.text){if(pendingChat.clearDraft&&$('#chat-input').value===pendingChat.draft)$('#chat-input').value='';pendingChat=null;$('#chat-feedback').textContent='Sent.';}
-
-
+ updateDeathUI();
 }
 
 let left=0,top=0;
@@ -209,13 +212,19 @@ function render(){
  const sharedCanopy=joined?remotePlayers.filter(p=>treeConcealed.has(p.id)&&sharesTreeCover(world.trees,player,p)):[];
  const concealed=new Set(treeConcealed);for(const p of sharedCanopy)concealed.delete(p.id);
  const draws=[];
+ for(const drop of droppedLoot)if(visible(drop.x,drop.y,30))draws.push({y:drop.y,draw:()=>{
+  const bob=reducedMotion?0:Math.sin(time*3+drop.x)*1.5,x=Math.round(drop.x),y=Math.round(drop.y+bob);shadow(x,drop.y,18);
+  ctx.fillStyle='#a77d4c';ctx.fillRect(x-7,y-12,14,11);ctx.fillStyle='#d4ae71';ctx.fillRect(x-4,y-16,8,5);ctx.fillStyle='#60472f';ctx.fillRect(x-5,y-12,10,2);
+  Object.keys(ORES).filter(type=>drop.items[type]>0).forEach((type,i)=>{ctx.fillStyle=ORES[type].color;ctx.fillRect(x-5+i*4,y-7,3,4);});
+ }});
+
  for(const tree of world.trees)if(visible(tree.x,tree.y))draws.push({y:tree.y,draw:()=>drawTree(tree)});
  for(const s of world.structures)if(!world.minedOres?.has(s.id)&&(s.kind!=='ore'||exposedRock(world,Math.floor(s.x/TILE),Math.floor(s.y/TILE)))&&visible(s.x,s.y))draws.push({y:s.y,draw:()=>drawStructure(s)});
  for(const a of creatures)if(visible(a.x,a.y,40))draws.push({y:a.y,draw:()=>{
   shadow(a.x,a.y,17);const flying=['butterfly','bat','ghost'].includes(a.kind),bob=reducedMotion?0:flying?-8+Math.sin(time*3+a.phase)*3:a.walking?Math.sin(time*10+a.phase)*1.1:0;
   drawSprite(walkingSprite(a,a.kind),a.x,a.y,28,spriteFlip(a,a.kind),a.kind==='amy'?0:bob);
  }});
- for(const p of [...remotePlayers,...(joined?[player]:[])])if(visible(p.x,p.y,60))draws.push({y:p.y,layer:p.hugging?(p.kind==='tarin'?2:1):0,draw:()=>{
+ for(const p of [...remotePlayers,...(joined?[player]:[])])if(!p.dead&&visible(p.x,p.y,60))draws.push({y:p.y,layer:p.hugging?(p.kind==='tarin'?2:1):0,draw:()=>{
   const size=p.kind==='amy'?32:43;shadow(p.x,p.y,22);drawSprite(walkingSprite(p,p.kind||selectedCharacter),p.x,p.y,size,spriteFlip(p,p.kind||selectedCharacter));
   if(treeConcealed.has(p.id))return;
   drawPlayerName(p,size);
@@ -236,7 +245,7 @@ function drawCanopyPlayers(concealed,shared){
  const overlays=[...shared,...(joined&&concealed.has(localId)?[player]:[])];
  overlays.sort((a,b)=>a.y-b.y||(a.hugging&&a.kind==='tarin'?2:1)-(b.hugging&&b.kind==='tarin'?2:1));
  for(const p of overlays){
-  if(!visible(p.x,p.y,60))continue;
+  if(p.dead||!visible(p.x,p.y,60))continue;
   if(p.id===localId){drawLocalSilhouette(concealed);continue;}
   const size=p.kind==='amy'?32:43;
   ctx.save();ctx.globalAlpha=.65;drawSprite(walkingSprite(p,p.kind),p.x,p.y,size,spriteFlip(p,p.kind));ctx.restore();
@@ -245,21 +254,21 @@ function drawCanopyPlayers(concealed,shared){
 }
 // Local silhouette is always visible; remote overlays require a shared canopy.
 function drawLocalSilhouette(concealed){
- if(!joined||player.id!==localId||!concealed.has(localId))return;
+ if(!joined||player.dead||player.id!==localId||!concealed.has(localId))return;
  const kind=player.kind||selectedCharacter;
  ctx.save();ctx.globalAlpha=.42;
  drawSprite(walkingSprite(player,kind),player.x,player.y,kind==='amy'?32:43,spriteFlip(player,kind));
  ctx.restore();
 }
 function showHugNotice(text){const notice=$('#hug-notice');notice.textContent=text;noticeUntil=Date.now()+2200;notice.hidden=false;if(!reducedMotion){notice.getAnimations?.().forEach(a=>a.cancel());notice.animate?.([{opacity:0,offset:0},{opacity:1,offset:.08},{opacity:1,offset:.75},{opacity:0,offset:1}],{duration:2200,fill:'both'});}}
-function offerHug(){if(hugRequests.some(r=>r.from===localId||r.to===localId)||!hugTarget||!joined||!connection?.welcomed||paused||menuOpen||chatOpen||inventoryOpen||player.hugging)return;connection.send({type:'hug-request',targetId:hugTarget.id});clearInput();canvas.focus();}
+function offerHug(){if(hugRequests.some(r=>r.from===localId||r.to===localId)||!hugTarget||!joined||!connection?.welcomed||paused||menuOpen||chatOpen||inventoryOpen||player.dead||player.hugging)return;connection.send({type:'hug-request',targetId:hugTarget.id});clearInput();canvas.focus();}
 function respondToHug(accept){if(!currentHugRequest||!connection?.welcomed)return;connection.send({type:'hug-response',requestId:currentHugRequest.id,accept});currentHugRequest=null;$('#hug-prompt').hidden=true;clearInput();canvas.focus();}
 $('#hug-action').onclick=offerHug;$('#hug-accept').onclick=()=>respondToHug(true);$('#hug-deny').onclick=()=>respondToHug(false);
 function updateHugUI(){
- const available=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen;
- hugTarget=available&&!player.hugging?remotePlayers.filter(p=>!p.hugging&&(!hiddenByTrees(world.trees,p)||sharesTreeCover(world.trees,player,p))&&Math.hypot(p.x-player.x,p.y-player.y)<=HUG_RANGE).sort((a,b)=>Math.hypot(a.x-player.x,a.y-player.y)-Math.hypot(b.x-player.x,b.y-player.y))[0]:null;
+ const available=joined&&connection?.welcomed&&!player?.dead&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen;
+ hugTarget=available&&!player.dead&&!player.hugging?remotePlayers.filter(p=>!p.dead&&!p.hugging&&(!hiddenByTrees(world.trees,p)||sharesTreeCover(world.trees,player,p))&&Math.hypot(p.x-player.x,p.y-player.y)<=HUG_RANGE).sort((a,b)=>Math.hypot(a.x-player.x,a.y-player.y)-Math.hypot(b.x-player.x,b.y-player.y))[0]:null;
  const outgoing=hugRequests.find(r=>r.from===localId),action=$('#hug-action');
- action.hidden=!available||!hugTarget||!!outgoing||!!currentHugRequest||!!player.hugging;
+ action.hidden=!available||!hugTarget||!!outgoing||!!currentHugRequest||!!player.dead||!!player.hugging;
  action.disabled=!!outgoing;action.textContent=outgoing?'Hug requested…':hugTarget?`Hug ${hugTarget.name} · H`:'';
  $('#hug-prompt').hidden=!available||!currentHugRequest;
  if(currentHugRequest){$('#hug-question').textContent=`${currentHugRequest.fromName} would like to hug you.`;$('#hug-countdown').textContent='Move away to cancel. Requests expire after 10 seconds.';}
@@ -294,7 +303,7 @@ function saveChatSettings(){
 $('#show-overhead-chat').checked=chatSettings.bubbles;$('#show-server-chat').checked=chatSettings.server;
 $('#show-overhead-chat').addEventListener('change',saveChatSettings);$('#show-server-chat').addEventListener('change',saveChatSettings);
 function setChatOpen(value){
- chatOpen=!!value&&joined&&!!connection?.welcomed;
+ chatOpen=!!value&&joined&&!!connection?.welcomed&&!player?.dead;
  $('#chat-panel').hidden=!chatOpen;$('#chat-toggle').setAttribute('aria-expanded',String(chatOpen));
  if(chatOpen){setInventoryOpen(false);menu.open=false;menuOpen=false;clearInput();$('#chat-input').focus();}
 }
@@ -308,7 +317,7 @@ $('#chat-close').onclick=()=>{setChatOpen(false);canvas.focus();};
 $('#chat-form').addEventListener('submit',e=>{e.preventDefault();sendChat($('#chat-input').value,true);});
 for(const text of QUICK_MESSAGES){const button=document.createElement('button');button.type='button';button.textContent=text;button.onclick=()=>sendChat(text);$('#quick-messages').appendChild(button);}
 function updateChatUI(){
- const available=joined&&connection?.welcomed&&!menuOpen&&!paused;
+ const available=joined&&connection?.welcomed&&!player?.dead&&!menuOpen&&!paused;
  $('#chat-toggle').hidden=!available;
  if(!available&&chatOpen)setChatOpen(false);
  if(pendingChat&&time-pendingChat.sentAt>5){pendingChat=null;$('#chat-feedback').textContent='Message not confirmed. Try sending again.';}
@@ -316,7 +325,7 @@ function updateChatUI(){
 function drawChatBubbles(concealed=new Set()){
  if(!chatSettings.bubbles)return;
  for(const p of [...remotePlayers,...(joined?[player]:[])]){
-  if(concealed.has(p.id)||!p.chat||time>=p.chatUntil||!visible(p.x,p.y,100))continue;
+  if(p.dead||concealed.has(p.id)||!p.chat||time>=p.chatUntil||!visible(p.x,p.y,100))continue;
   ctx.save();ctx.font='9px sans-serif';ctx.textAlign='left';ctx.textBaseline='top';
   const maxWidth=Math.min(126,viewWidth-30),lines=wrapChat(p.chat.text,text=>ctx.measureText(text).width,maxWidth-16);
   const width=Math.max(45,...lines.map(line=>ctx.measureText(line).width+16)),height=lines.length*12+12;
@@ -340,13 +349,13 @@ function renderInventory(){
 
 }
 function setInventoryOpen(value){
- inventoryOpen=!!value&&joined&&!!connection?.welcomed&&!paused;
+ inventoryOpen=!!value&&joined&&!!connection?.welcomed&&!paused&&!player?.dead;
  $('#inventory-panel').hidden=!inventoryOpen;$('#inventory-toggle').setAttribute('aria-expanded',String(inventoryOpen));
  if(inventoryOpen){setChatOpen(false);menu.open=false;menuOpen=false;clearInput();connection.sendInput({x:0,y:0,run:false});$('#inventory-close').focus();}
 }
 $('#inventory-toggle').onclick=()=>{setInventoryOpen(!inventoryOpen);if(!inventoryOpen)canvas.focus();};
 $('#inventory-close').onclick=()=>{setInventoryOpen(false);canvas.focus();};
-function miningAvailable(){return joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player?.hugging&&world?.stage==='mine';}
+function miningAvailable(){return joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player?.dead&&!player?.hugging&&world?.stage==='mine';}
 function stopMining(){
  const old=mouseMining;mouseMining=null;miningTarget=null;
  if(lastMineKey!==null&&connection?.welcomed)connection.send({type:'mine-target',x:null,y:null});
@@ -380,16 +389,16 @@ function drawMining(){
  }
 }
 function updateInventoryUI(){
- const available=joined&&connection?.welcomed&&!paused&&!menuOpen;
+ const available=joined&&connection?.welcomed&&!player?.dead&&!paused&&!menuOpen;
  $('#inventory-toggle').hidden=!available;
  if(!available&&inventoryOpen)setInventoryOpen(false);
  $('#mining-controls').hidden=!miningAvailable();
 }
 
-function useNearbyPortal(){if(!joined||!connection?.welcomed||!nearbyPortal||paused||menuOpen||chatOpen||inventoryOpen||player.hugging)return;clearInput();connection.send({type:'use-portal'});canvas.focus();}
+function useNearbyPortal(){if(!joined||!connection?.welcomed||!nearbyPortal||paused||menuOpen||chatOpen||inventoryOpen||player.dead||player.hugging)return;clearInput();connection.send({type:'use-portal'});canvas.focus();}
 $('#portal-action').onclick=useNearbyPortal;
 function updatePortalUI(){
- nearbyPortal=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player.hugging?world.portals.find(portal=>Math.hypot(player.x-portal.x,player.y-portal.y)<=90):null;
+ nearbyPortal=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!inventoryOpen&&!player.dead&&!player.hugging?world.portals.find(portal=>Math.hypot(player.x-portal.x,player.y-portal.y)<=90):null;
  const button=$('#portal-action');button.hidden=!nearbyPortal;
  if(nearbyPortal)button.textContent=world.stage==='forest'?'Enter mine · E':'Exit mine · E';
 }
@@ -402,7 +411,17 @@ function updateMineInfo(){
  bubble.style.left=`${Math.max(width/2+10,Math.min(canvas.width-width/2-10,screenX))}px`;
  bubble.style.top=`${Math.max(12,screenY-100*zoom-height)}px`;
 }
-function frame(now){const dt=Math.min(.04,(now-previous)/1000||0);previous=now;if(ready){time+=dt;if(joined)update(dt);render();updateHugUI();updateChatUI();updateMineInfo();updatePortalUI();updateInventoryUI();}requestAnimationFrame(frame);}
+function updateDeathUI(){
+ const show=joined&&!!player?.dead,modal=$('#death-modal');
+ if(show&&!deathOpen){
+  deathOpen=true;setChatOpen(false);setInventoryOpen(false);setPaused(false);closeMenu();clearInput();
+  $('#hug-notice').hidden=true;$('#death-error').hidden=true;modal.hidden=false;modal.showModal?.();$('#respawn').focus();
+ }else if(!show&&deathOpen){deathOpen=false;respawnPending=false;modal.close?.();modal.hidden=true;canvas.focus();}
+ $('#respawn').disabled=respawnPending||!connection?.welcomed;
+}
+$('#death-modal').addEventListener('cancel',event=>event.preventDefault());
+$('#respawn').onclick=()=>{if(!joined||!player?.dead||respawnPending||!connection?.welcomed)return;respawnPending=true;$('#death-error').hidden=true;$('#respawn').disabled=true;connection.send({type:'respawn'});};
+function frame(now){const dt=Math.min(.04,(now-previous)/1000||0);previous=now;if(ready){time+=dt;if(joined)update(dt);render();updateHugUI();updateChatUI();updateMineInfo();updatePortalUI();updateInventoryUI();updateDeathUI();}requestAnimationFrame(frame);}
 async function start(){
  try{
   const results=await Promise.all(['./assets/collection.json','./assets/actors.json'].map(async url=>{const res=await fetch(url);if(!res.ok)throw new Error(`Could not load ${url}`);return res.json();}));
@@ -426,11 +445,11 @@ function renderOnlinePlayers(roster,hostId){
  });
  $('#online-list').replaceChildren(...rows);$('#roster-help').textContent='You can remove any other player, including the host.';
 }
-function showError(message,context){if(context==='chat'){pendingChat=null;$('#chat-feedback').textContent=message;return;}if(joined){if(connection?.welcomed)$('#connection-status').hidden=true;showHugNotice(message);return;}$('#join-error').textContent=message;$('#join-error').hidden=false;$('#join-button').disabled=false;}
+function showError(message,context){if(context==='respawn'){respawnPending=false; $('#respawn').disabled=false;$('#death-error').hidden=false;$('#death-error').textContent=message;return;}if(context==='chat'){pendingChat=null;$('#chat-feedback').textContent=message;return;}if(joined){if(connection?.welcomed)$('#connection-status').hidden=true;showHugNotice(message);return;}$('#join-error').textContent=message;$('#join-error').hidden=false;$('#join-button').disabled=false;}
 connection=new ForestConnection({onRemoved:message=>returnToLogin(message),onChat:message=>addServerChat([message]),url:`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/ws`,onState:receiveState,
  onWelcome(message){if(message.protocolVersion!==PROTOCOL_VERSION){connection.disconnect();returnToLogin(PROTOCOL_ERROR);return;}serverChatMessages=[];savedProfile={name:$('#player-name').value.trim(),character:selectedCharacter,token:message.token};try{sessionStorage.setItem('forest-profile',JSON.stringify(savedProfile));}catch{}localId=message.id;joined=true;rosterSignature='';addServerChat(message.chatHistory||[]);revision=null;$('#login').hidden=true;canvas.setAttribute('aria-label',`Explore as ${selectedCharacter==='amy'?'Amy':'Tarin'}. WASD or arrows to walk, Shift to run. Open the menu for controls.`);$('#join-button').disabled=false;$('#session-name').textContent=`${$('#player-name').value.trim()} · ${selectedCharacter==='amy'?'Amy':'Tarin'}`;setPaused(false);closeMenu();},
- onStatus(status){$('#connection-status').textContent=status;$('#connection-status').hidden=status==='Connected'||!joined;if(status!=='Connected'){clearInput();if(player)player.walking=false;for(const a of remotePlayers)a.walking=false;}},onError:showError});
+ onStatus(status){$('#connection-status').textContent=status;$('#connection-status').hidden=status==='Connected'||!joined;if(status!=='Connected'){respawnPending=false;clearInput();if(player)player.walking=false;for(const a of remotePlayers)a.walking=false;}updateDeathUI();},onError:showError});
 $('#join-form').addEventListener('submit',e=>{e.preventDefault();if(!ready)return;const name=$('#player-name').value.trim();if(!name||name.length>24){showError('Enter a name from 1 to 24 characters.');return;}selectedCharacter=$('input[name="character"]:checked').value;$('#join-error').hidden=true;$('#join-button').disabled=true;connection.connect({name,character:selectedCharacter,token:savedProfile?.name===name&&savedProfile?.character===selectedCharacter?savedProfile.token:undefined});});
-function returnToLogin(reason=''){savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}setInventoryOpen(false);inventory=emptyInventory();renderInventory();$('#inventory-toggle').hidden=true;$('#mining-controls').hidden=true;setChatOpen(false);pendingChat=null;lastChatIds.clear();joined=false;serverChatMessages=[];renderServerChat();localId=null;remotePlayers=[];hugRequests=[];currentHugRequest=null;hugEffects.clear();$('#hug-prompt').hidden=true;$('#hug-action').hidden=true;clearInput();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=!reason;$('#join-error').textContent=reason;rosterSignature='';$('#online-list').replaceChildren();$('#player-name').focus();}
+function returnToLogin(reason=''){savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}setInventoryOpen(false);inventory=emptyInventory();renderInventory();$('#inventory-toggle').hidden=true;$('#mining-controls').hidden=true;setChatOpen(false);pendingChat=null;lastChatIds.clear();joined=false;updateDeathUI();droppedLoot=[];serverChatMessages=[];renderServerChat();localId=null;remotePlayers=[];hugRequests=[];currentHugRequest=null;hugEffects.clear();$('#hug-prompt').hidden=true;$('#hug-action').hidden=true;clearInput();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=!reason;$('#join-error').textContent=reason;rosterSignature='';$('#online-list').replaceChildren();$('#player-name').focus();}
 $('#logout').onclick=()=>{connection.disconnect();returnToLogin();};
 start();

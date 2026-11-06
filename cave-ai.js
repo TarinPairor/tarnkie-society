@@ -51,7 +51,7 @@ export function updateCaveMonster(world,actor,players,dt,random=Math.random){
  const targetTile=Math.floor(target.y/TILE)*SIZE+Math.floor(target.x/TILE),terrain=world.brokenBlocks?.size||0;
  actor.pathTimer=(actor.pathTimer||0)-dt;
  if(switched||actor.pathTimer<=0||actor.pathTile!==targetTile||actor.pathTerrain!==terrain){actor.path=cavePath(world,actor,target);actor.pathTimer=.6;actor.pathTile=targetTile;actor.pathTerrain=terrain;}
- if(Math.hypot(target.x-actor.x,target.y-actor.y)<=18)return;
+ if(Math.hypot(target.x-actor.x,target.y-actor.y)<=(actor.radius||5)+(target.radius||7))return;
  if(actor.path?.length)actor.path[actor.path.length-1]={x:target.x,y:target.y};
  let remaining=CAVE_CHASE_SPEED*dt;
  while(remaining>0&&actor.path?.length){

@@ -193,6 +193,13 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  assert.equal(sandbox.miningMessage.type,'mine-target');assert(Number.isInteger(sandbox.miningMessage.x));
  element('#game').handlers.pointerup({pointerId:4});assert.equal(sandbox.miningMessage.x,null);
  vm.runInContext(`state.brokenBlocks=[minedIndex];receiveState(state);render();globalThis.opened=world.blocked[minedIndex]===0&&world.tiles[minedIndex]===4;`,sandbox);assert.equal(sandbox.opened,true);
+ vm.runInContext(`state.players[0].dead=true;state.inventory=emptyInventory();state.drops=[{id:'loot',owner:'amy',x:state.players[0].x,y:state.players[0].y,items:{copper:3,iron:2,gold:1}}];receiveState(state);render();updateChatUI();updateInventoryUI();updateHugUI();updatePortalUI();connection.send=m=>globalThis.deathMessage=m;keys.add('d');update(.04);`,sandbox);
+ assert.equal(element('#death-modal').hidden,false);assert.equal(element('#respawn').focused,true);assert.equal(element('#inventory-toggle').hidden,true);assert.equal(element('#chat-toggle').hidden,true);assert.equal(sandbox.sentInput.x,0);
+ windowEvents.keydown({key:'i',target:{tagName:'BUTTON'},preventDefault(){}});assert.equal(element('#inventory-panel').hidden,true);
+ let canceled=false;element('#death-modal').handlers.cancel({preventDefault(){canceled=true;}});assert(canceled);assert.equal(element('#death-modal').hidden,false);
+ element('#respawn').onclick();assert.equal(sandbox.deathMessage.type,'respawn');assert.equal(element('#respawn').disabled,true);vm.runInContext('updateDeathUI()',sandbox);assert.equal(element('#respawn').disabled,true);
+ vm.runInContext(`state.players[0].dead=false;state.players[0].x=world.spawn.x;state.players[0].y=world.spawn.y;receiveState(state);globalThis.respawnedAtEntry=player.x===world.spawn.x&&player.y===world.spawn.y;`,sandbox);assert.equal(element('#death-modal').hidden,true);assert.equal(sandbox.respawnedAtEntry,true);
+ assert(readFileSync(new URL('../index.html',import.meta.url),'utf8').includes('>You died!</h2>'));
  vm.runInContext(`returnToLogin('You were removed by the host.');`,sandbox);assert.equal(element('#login').hidden,false);assert.equal(element('#join-error').hidden,false);assert.match(element('#join-error').textContent,/removed/);
 
  vm.runInContext(`connection.onWelcome({id:'outdated',token:'invalid',protocolVersion:0});`,sandbox);assert.equal(element('#login').hidden,false);assert.match(element('#join-error').textContent,/updated/);

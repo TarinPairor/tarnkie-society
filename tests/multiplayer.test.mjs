@@ -189,3 +189,18 @@ test('held WebSocket mining shares cracks and broken terrain, awards ore once an
  b.send({type:'mine-target',x,y});await new Promise(r=>setTimeout(r,150));assert.equal(pb.inventory[ore.oreType],0);
  const oldId=pa.id;[...game.wss.clients].find(ws=>ws.player?.id===oldId).terminate();a.socket.terminate();await waitFor(()=>a.welcomed&&states.a?.brokenBlocks.includes(y*144+x));assert.equal(welcomes.a.id,oldId);assert.equal(states.a.inventory[ore.oreType],1);
 });
+
+
+test('WebSocket death drops inventory for both clients and requires explicit respawn before collecting again',async t=>{
+ const game=createGameServer(),streams=[],WebSocketClass=transport(game,streams),states={},welcome={};
+ const options=who=>({url:'ws://localhost/ws',WebSocketClass,onState:s=>states[who]=s,onWelcome:m=>welcome[who]=m,onStatus(){},onError:m=>assert.fail(m)}),a=new ForestConnection(options('a')),b=new ForestConnection(options('b'));
+ t.after(()=>{a.disconnect();b.disconnect();game.shutdown();for(const s of streams)s.destroy();game.server.close();});
+ a.connect({name:'T',character:'tarin'});b.connect({name:'A',character:'amy'});await waitFor(()=>welcome.a&&welcome.b);
+ const pa=[...game.room.sessions.values()].find(p=>p.id===welcome.a.id),pb=[...game.room.sessions.values()].find(p=>p.id===welcome.b.id);game.room.changeStage(pa,'mine');game.room.changeStage(pb,'mine');
+ const cave=game.room.worldFor(pa);Object.assign(pa.inventory,{copper:8,iron:3,gold:1});game.room.inventoryStore.save('tarin',pa.inventory);pa.y+=60;
+ cave.creatures=[{kind:'spider',x:pa.x,y:pa.y,homeX:pa.x,homeY:pa.y,radius:5,state:'idle',timer:100,speed:24,angle:0,phase:0}];
+ await waitFor(()=>states.a?.players.find(p=>p.id===pa.id)?.dead&&states.b?.drops.length===1);assert.deepEqual(states.a.inventory,{copper:0,iron:0,gold:0});assert.deepEqual(states.b.drops[0].items,{copper:8,iron:3,gold:1});
+ const deadX=pa.x,deadY=pa.y;a.sendInput({x:1,y:0,run:true});await new Promise(r=>setTimeout(r,150));assert.equal(pa.x,deadX);assert.equal(pa.y,deadY);assert.equal(pa.dead,true);
+ cave.creatures=[];a.send({type:'respawn'});await waitFor(()=>states.a.players.find(p=>p.id===pa.id)?.dead===false);assert.equal(pa.x,cave.spawn.x);assert.equal(pa.y,cave.spawn.y);assert.deepEqual(states.a.inventory,{copper:0,iron:0,gold:0});
+ const drop=cave.drops[0];Object.assign(pa,{x:drop.x,y:drop.y});a.sendInput({x:0,y:0,run:false});await waitFor(()=>states.a.inventory.copper===8&&states.b.drops.length===0);assert.equal(game.room.inventoryStore.load('tarin').gold,1);
+});

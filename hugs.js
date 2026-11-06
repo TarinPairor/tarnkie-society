@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {canStand} from './world.js';
 import {HUG_RANGE,HUG_DURATION,HUG_REQUEST_TTL} from './hug-config.js';
 export function closeEnough(world,a,b){
- if(!a||!b||(a.stage||'forest')!==(b.stage||'forest')||(a.stage==='mine'&&a.mineVersion!==b.mineVersion)||Math.hypot(a.x-b.x,a.y-b.y)>HUG_RANGE)return false;
+ if(!a||!b||a.dead||b.dead||(a.stage||'forest')!==(b.stage||'forest')||(a.stage==='mine'&&a.mineVersion!==b.mineVersion)||Math.hypot(a.x-b.x,a.y-b.y)>HUG_RANGE)return false;
  const steps=Math.max(1,Math.ceil(Math.hypot(a.x-b.x,a.y-b.y)/8));
  for(let i=0;i<=steps;i++)if(!canStand(world,a.x+(b.x-a.x)*i/steps,a.y+(b.y-a.y)*i/steps,2))return false;
  return true;

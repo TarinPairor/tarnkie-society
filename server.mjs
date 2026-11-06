@@ -14,7 +14,7 @@ export function createGameServer({inventoryStore=createPersistentInventoryStore(
  const collection=JSON.parse(readFileSync(new URL('./assets/collection.json',import.meta.url)));
  const room=new ForestRoom(collection.filter(o=>['Creatures','Monsters'].includes(o.category)),{inventoryStore,onInventoryError(player,error){
   console.error('Could not save character inventory:',error.message);
-  if(player.connection)send(player.connection,{type:'error',context:'inventory',message:'Inventory storage is unavailable. Ore has not been collected; please try again shortly.'});
+  if(player.connection)send(player.connection,{type:'error',context:'inventory',message:'Inventory storage is unavailable. Please try again shortly.'});
  }});
  const server=http.createServer(async(req,res)=>{try{
   const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
@@ -42,6 +42,7 @@ export function createGameServer({inventoryStore=createPersistentInventoryStore(
    if(Date.now()-ws.rateAt>=1000){ws.rateAt=Date.now();ws.rate=0;}if(++ws.rate>100){ws.close(1008,'Too many messages');return;}
    const m=JSON.parse(data.toString());context=m?.type;if(!m||typeof m!=='object')return;
    if(m.type==='join'&&!ws.player){if(m.protocolVersion!==PROTOCOL_VERSION)throw new Error(PROTOCOL_ERROR);ws.player=room.join(m,ws);clearTimeout(joinTimeout);send(ws,{type:'welcome',protocolVersion:PROTOCOL_VERSION,id:ws.player.id,token:ws.player.token,chatHistory:room.chatHistory});broadcast();}
+   else if(m.type==='respawn'&&ws.player){room.survival.respawn(ws.player);broadcast();}
    else if(m.type==='mine-target'&&ws.player)room.mineTarget(ws.player,m.x,m.y);
    else if(m.type==='chat'&&ws.player){room.chat(ws.player,m.text);const message=room.chatHistory.at(-1);for(const client of wss.clients)if(client.player)send(client,{type:'chat-message',message});broadcast();}
    else if(m.type==='hug-request'&&ws.player){room.hugs.request(ws.player,m.targetId);broadcast();}
