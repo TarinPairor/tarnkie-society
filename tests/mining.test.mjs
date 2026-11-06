@@ -8,10 +8,10 @@ const xy=ore=>({x:Math.floor(ore.x/TILE),y:Math.floor(ore.y/TILE)});
 function standBeside(world,{x,y}){for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const p={x:(x+dx)*TILE+16,y:(y+dy)*TILE+16};if(canStand(world,p.x,p.y,7)&&canMineBlock(world,p,x,y))return p;}throw new Error('Rock is inaccessible');}
 function setup(){let now=1000;const room=new ForestRoom([],{now:()=>now}),a=room.join({name:'T',character:'tarin'},{}),b=room.join({name:'A',character:'amy'},{});room.changeStage(a,'mine');room.changeStage(b,'mine');const world=room.worldFor(a);return {room,a,b,world,advance:(n=1)=>{for(let i=0;i<n;i++){now+=50;room.tick(.05);}}};}
 function hold(room,p,target,advance,n=22){for(let i=0;i<n;i++){room.mineTarget(p,target.x,target.y);advance();}}
-test('ore rarity follows copper 70%, iron 25%, gold 5%; inventory has 25 stacking slots',()=>{
+test('ore rarity follows copper 70%, iron 25%, gold 5%; inventory has 5 stacking slots',()=>{
  const counts=emptyInventory();for(let i=0;i<1000;i++)counts[rollOre(i/1000)]++;
  assert.deepEqual(counts,{copper:700,iron:250,gold:50});assert.equal(rollOre(.7),'iron');assert.equal(rollOre(.95),'gold');
- assert.equal(inventorySlots(emptyInventory()).filter(Boolean).length,0);const slots=inventorySlots({copper:123,iron:3,gold:1});assert.equal(slots.length,25);assert.deepEqual(slots[0],{type:'copper',count:123});assert.equal(slots.filter(Boolean).length,3);
+ assert.equal(inventorySlots(emptyInventory()).filter(Boolean).length,0);const slots=inventorySlots({copper:123,iron:3,gold:1});assert.equal(slots.length,5);assert.deepEqual(slots[0],{type:'copper',count:123});assert.equal(slots.filter(Boolean).length,3);
 });
 test('ore is deterministic and buried veins stay hidden until adjacent rock is opened',()=>{
  const world=makeCave('ores'),ores=world.structures.filter(s=>s.kind==='ore');assert(ores.length>100);assert.deepEqual(ores,makeCave('ores').structures.filter(s=>s.kind==='ore'));assert.equal(new Set(ores.map(s=>s.id)).size,ores.length);

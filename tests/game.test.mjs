@@ -188,7 +188,7 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
   canvas.getBoundingClientRect=()=>({left:0,top:0,width:400,height:400});canvas.width=400;canvas.height=400;
   globalThis.minedIndex=vy*SIZE+vx;
  `,sandbox);
- assert.equal(element('#count-copper').textContent,'3');assert.equal(element('#count-gold').textContent,'1');assert.equal(element('#inventory-total').textContent,'6 ores · 3 / 25 slots');assert.equal(element('#inventory-slots').children.length,25);
+ assert.equal(element('#inventory-slots').children.length,5);assert.equal(element('#inventory-slots').children[0].children[1].textContent,'3');assert.equal(element('#inventory-slots').children[2].children[1].textContent,'1');
  element('#game').handlers.pointerdown({clientX:185.6,clientY:185.6,pointerType:'mouse',button:0,pointerId:4,preventDefault(){}});
  assert.equal(sandbox.miningMessage.type,'mine-target');assert(Number.isInteger(sandbox.miningMessage.x));
  element('#game').handlers.pointerup({pointerId:4});assert.equal(sandbox.miningMessage.x,null);

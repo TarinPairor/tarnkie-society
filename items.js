@@ -6,7 +6,7 @@ export const ORES={
 export function emptyInventory(){return {copper:0,iron:0,gold:0};}
 export function rollOre(value){return value<.70?'copper':value<.95?'iron':'gold';}
 
-export const INVENTORY_SIZE=25;
+export const INVENTORY_SIZE=5;
 export function inventorySlots(inventory){
  const stacks=Object.keys(ORES).filter(type=>inventory[type]>0).map(type=>({type,count:inventory[type]}));
  return Array.from({length:INVENTORY_SIZE},(_,i)=>stacks[i]||null);

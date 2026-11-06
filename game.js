@@ -337,9 +337,7 @@ function renderInventory(){
    return cell;
   });$('#inventory-slots').replaceChildren(...cells);
  }
- let total=0;for(const type of Object.keys(ORES)){const count=inventory[type]||0;$('#count-'+type).textContent=String(count);total+=count;}
- $('#inventory-total').textContent=`${total} ore${total===1?'':'s'} · ${slots.filter(Boolean).length} / 25 slots`;
- $('#inventory-empty').hidden=total>0;
+
 }
 function setInventoryOpen(value){
  inventoryOpen=!!value&&joined&&!!connection?.welcomed&&!paused;
