@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,readFileSync,readdirSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {InventoryStore} from '../inventory-store.mjs';
+import {InventoryStore,createPersistentInventoryStore} from '../inventory-store.mjs';
 import {ForestRoom} from '../multiplayer.js';
 import {emptyInventory} from '../items.js';
 import {SIZE,TILE} from '../world.js';
@@ -41,4 +41,23 @@ test('older disconnected sessions cannot roll back a character claimed and updat
 test('failed storage writes leave ore unbroken and inventory unchanged',()=>{
  let now=1000;const store=new InventoryStore(),errors=[],room=new ForestRoom([],{inventoryStore:store,now:()=>now,onInventoryError:(p,e)=>errors.push(e)}),p=room.join({name:'T',character:'tarin'},{});store.save=()=>{throw new Error('Disk full');};
  const {world,ore,index}=mine(room,p,()=>{now+=50;room.tick(.05);});assert(errors.length>0);assert.equal(world.blocked[index],1);assert(!world.minedOres.has(ore.id));assert.deepEqual(p.inventory,emptyInventory());
+});
+
+test('persistent store factory restores saved data in the configured directory',t=>{
+ const filePath=temporary(t),dataDir=path.dirname(filePath),first=createPersistentInventoryStore({dataDir});
+ first.save('tarin',{copper:10,iron:6,gold:2});
+ assert.deepEqual(createPersistentInventoryStore({dataDir}).load('tarin'),{copper:10,iron:6,gold:2});
+});
+for(const character of ['tarin','amy'])test(`${character} keeps every collected ore across repeated regenerated mine visits, logout and disk reload`,t=>{
+ const filePath=temporary(t);let now=1000;
+ const createRoom=()=>new ForestRoom([],{inventoryStore:new InventoryStore({filePath}),now:()=>now});
+ let room=createRoom(),p=room.join({name:'First name',character},{}),expected=emptyInventory();
+ for(let visit=0;visit<4;visit++){
+  const {ore}=mine(room,p,()=>{now+=50;room.tick(.05);});expected[ore.oreType]++;
+  assert.deepEqual(new InventoryStore({filePath}).load(character),expected,'ore saved immediately before exiting');
+  const version=p.mineVersion;room.changeStage(p,'forest');assert.deepEqual(room.snapshot(p.id).inventory,expected);
+  room.changeStage(p,'mine');assert.notEqual(p.mineVersion,version);assert.deepEqual(room.snapshot(p.id).inventory,expected,'regenerated cave preserves inventory');
+  room.logout(p);room=createRoom();p=room.join({name:`New browser ${visit}`,character},{});
+  assert.deepEqual(room.snapshot(p.id).inventory,expected,'new session on restarted server restores every ore');
+ }
 });

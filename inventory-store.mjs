@@ -1,5 +1,6 @@
 import {readFileSync,mkdirSync,writeFileSync,renameSync,rmSync} from 'node:fs';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 import {emptyInventory,ORES} from './items.js';
 const CHARACTERS=['tarin','amy'];
@@ -27,4 +28,8 @@ export class InventoryStore {
   }
   this.characters=next;
  }
+}
+
+export function createPersistentInventoryStore({dataDir=process.env.GAME_DATA_DIR||fileURLToPath(new URL('./data/',import.meta.url))}={}){
+ return new InventoryStore({filePath:path.resolve(dataDir,'inventories.json')});
 }

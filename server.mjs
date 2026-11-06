@@ -1,4 +1,4 @@
-import {InventoryStore} from './inventory-store.mjs';
+import {createPersistentInventoryStore} from './inventory-store.mjs';
 import {PROTOCOL_VERSION,PROTOCOL_ERROR} from './protocol.js';
 import {packCaveTerrain} from './terrain.js';
 import http from 'node:http';
@@ -9,7 +9,7 @@ import path from 'node:path';
 import {WebSocketServer,WebSocket} from 'ws';
 import {ForestRoom} from './multiplayer.js';
 
-export function createGameServer({inventoryStore=new InventoryStore()}={}){
+export function createGameServer({inventoryStore=createPersistentInventoryStore()}={}){
  const root=fileURLToPath(new URL('.',import.meta.url));
  const collection=JSON.parse(readFileSync(new URL('./assets/collection.json',import.meta.url)));
  const room=new ForestRoom(collection.filter(o=>['Creatures','Monsters'].includes(o.category)),{inventoryStore,onInventoryError(player,error){
@@ -63,8 +63,7 @@ export function createGameServer({inventoryStore=new InventoryStore()}={}){
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href){
  const args=process.argv.slice(2),index=args.indexOf('--port'),port=index>=0?Number(args[index+1]):Number(process.env.PORT)||5174;
- const dataDir=process.env.GAME_DATA_DIR||fileURLToPath(new URL('./data/',import.meta.url));
- const {server,shutdown}=createGameServer({inventoryStore:new InventoryStore({filePath:path.join(dataDir,'inventories.json')})});let listeningPort=port;
+ const {server,shutdown}=createGameServer();let listeningPort=port;
  server.on('error',error=>{
   if(error.code==='EADDRINUSE'&&listeningPort<port+10){
    console.log(`Port ${listeningPort} is already in use. Trying ${listeningPort+1} for multiplayer…`);
