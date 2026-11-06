@@ -7,11 +7,11 @@ const types=[{id:'spider',name:'Cave spider',category:'Monsters'}];
 const spider=(x=1000,y=1000)=>({id:'spider',x,y,homeX:x,homeY:y,radius:5,speed:24,state:'idle',timer:1,angle:0,flip:false,walking:false,targetId:null});
 const openWorld=()=>({stage:'mine',blocked:new Uint8Array(SIZE*SIZE),brokenBlocks:new Set()});
 function camera(p,w=800,h=500){return {x:Math.max(0,p.x-w/2),y:Math.max(0,p.y-h/2),width:w,height:h};}
-test('rare cave spiders spawn only in large natural chambers outside every current camera',()=>{
+test('rare cave spiders spawn on walkable cave floor outside every current camera',()=>{
  for(const seed of ['TARIN-01','cave-spiders','another-mine']){
   const world=makeCave(seed),players=[{...world.spawn,view:camera(world.spawn)}];
   const actors=makeCaveMonsters(world,types,players);assert(actors.length>0);assert(actors.length<=CAVE_MONSTER_LIMIT);assert.deepEqual(actors,makeCaveMonsters(world,types,players));
-  for(const a of actors){assert.equal(a.kind,'spider');assert.equal(a.stage,'mine');assert(canStand(world,a.x,a.y,5));assert(outsidePlayerViews(a.x,a.y,players));assert(world.rooms.some(r=>r.rx>=2&&r.ry>=2&&a.x===r.x*TILE+16&&a.y===r.y*TILE+16));}
+  for(const a of actors){assert.equal(a.kind,'spider');assert.equal(a.stage,'mine');assert(canStand(world,a.x,a.y,5));assert(outsidePlayerViews(a.x,a.y,players));}
   const watcher={x:actors[0].x,y:actors[0].y,view:camera(actors[0])};assert(!makeCaveMonsters(world,types,[...players,watcher]).some(a=>a.x===watcher.x&&a.y===watcher.y));
  }
 });
@@ -46,4 +46,12 @@ test('cave monster state is shared only within its mine instance and old instanc
  room.changeStage(b,'mine');report(b);room.tick(.05);assert.deepEqual(room.snapshot(a.id).creatures,room.snapshot(b.id).creatures);assert.equal(cave.creatures,actors);
  room.changeStage(a,'forest');room.changeStage(a,'mine');assert.notEqual(room.worldFor(a),cave);assert.equal(room.worldFor(b).creatures,actors);report(a);room.tick(.05);assert(room.worldFor(a).creatures.length>0);assert.notEqual(room.worldFor(a).creatures,actors);
  const target=actors[0];Object.assign(b,{x:target.x+30,y:target.y});room.tick(.05);assert.equal(target.targetId,b.id);room.changeStage(b,'forest');room.tick(.05);assert(!room.snapshot(a.id).players.some(p=>p.id===b.id));
+});
+
+test('off-screen single-tile tunnels are eligible even with no open chambers',()=>{
+ const world=makeCave('tunnel-spawns');world.blocked.fill(1);world.rooms=[];
+ for(let x=50;x<=120;x++)world.blocked[70*SIZE+x]=0;
+ world.spawn={x:50*TILE+16,y:70*TILE+16};const players=[{...world.spawn,view:camera(world.spawn,320,240)}];
+ const actors=makeCaveMonsters(world,types,players);assert.equal(actors.length,CAVE_MONSTER_LIMIT);
+ for(const a of actors){assert.equal(a.y,70*TILE+16);assert(canStand(world,a.x,a.y,5));assert(outsidePlayerViews(a.x,a.y,players));}
 });

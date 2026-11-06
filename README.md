@@ -117,7 +117,7 @@ The programmatic `createGameServer()` factory also uses disk persistence by defa
 
 ## Cave spiders
 
-Each cave instance has at most two rare Cave spiders, using the existing monster sprite. They spawn once in the larger natural chambers (at least five tiles across, with open neighboring floor), away from the entrance and at least 20 tiles apart. Spawning waits until every current miner has reported their cave camera bounds; spawn points must lie outside all of those viewports with a two-tile margin. There are no recurring on-screen spawns or monster spawns in narrow tunnels.
+Each cave instance has at most two rare Cave spiders, using the existing monster sprite. They can spawn on any walkable cave floor, including narrow tunnels and small passages, away from the entrance and at least 20 tiles apart. Spawning waits until every current miner has reported their cave camera bounds; spawn points must lie outside all of those viewports with a two-tile margin. Spawning happens once per cave population and never on-screen.
 
 Spiders idle and wander like overworld animals. A spider starts following the nearest player within 15 tiles and keeps its current target until that player moves beyond 20 tiles, disconnects, or leaves that cave instance. Pursuit speed is one-third of player sprint speed (170 / 3 ≈ 56.7 world pixels per second). They find paths around walls through narrow tunnels and update those routes as players move or mining opens passages. Touching a spider is lethal; it follows all the way into contact range.
 

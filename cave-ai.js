@@ -8,13 +8,14 @@ export function makeCaveMonsters(world,types,players){
  const type=types.find(t=>t.id==='spider'&&t.category==='Monsters')||types.find(t=>t.category==='Monsters');
  if(!type||!players.length||players.some(p=>!p.view))return [];
  const random=randomFromSeed(world.seed+'-cave-monsters'),actors=[];
- const rooms=world.rooms.filter(r=>r.rx>=2&&r.ry>=2).map(r=>({...r,order:random()})).sort((a,b)=>a.order-b.order);
- for(const room of rooms){
+ const candidates=[];
+ for(let i=0;i<world.blocked.length;i++)if(!world.blocked[i])candidates.push(i);
+ for(let i=candidates.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[candidates[i],candidates[j]]=[candidates[j],candidates[i]];}
+ for(const index of candidates){
   if(actors.length>=CAVE_MONSTER_LIMIT)break;
-  const x=room.x*TILE+16,y=room.y*TILE+16;
-  // Spawn only in the larger natural chambers, with open floor on all sides.
-  if(Math.hypot(x-world.spawn.x,y-world.spawn.y)<10*TILE||!outsidePlayerViews(x,y,players)||actors.some(a=>Math.hypot(a.x-x,a.y-y)<20*TILE))continue;
-  if(![-1,0,1].every(dy=>[-1,0,1].every(dx=>canStand(world,x+dx*TILE,y+dy*TILE,5))))continue;
+  const x=index%SIZE*TILE+16,y=Math.floor(index/SIZE)*TILE+16;
+  // Any walkable cave floor is eligible, including one-tile passages.
+  if(!canStand(world,x,y,5)||Math.hypot(x-world.spawn.x,y-world.spawn.y)<10*TILE||!outsidePlayerViews(x,y,players)||actors.some(a=>Math.hypot(a.x-x,a.y-y)<20*TILE))continue;
   actors.push({id:`cave-creature-${actors.length}`,stage:'mine',kind:type.id,name:type.name,x,y,homeX:x,homeY:y,angle:random()*Math.PI*2,timer:1+random()*3,state:'idle',speed:16+random()*16,phase:random()*6,radius:5,flip:false,walking:false,targetId:null});
  }
  return actors;
