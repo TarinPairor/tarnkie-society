@@ -2,6 +2,9 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import {PROTOCOL_VERSION,PROTOCOL_ERROR} from '../protocol.js';
+import {applyCaveTerrain,packCaveTerrain} from '../terrain.js';
+import {MINE_INFO,mineEntranceAt} from '../mine-info.js';
 import * as engine from '../world.js';
 import {advanceWalk,walkingSprite,spriteFlip} from '../animation.js';
 import {ForestConnection} from '../network.js';
@@ -50,9 +53,9 @@ test('all creature types spawn and wander without combat or escaping the terrain
 test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and toggles map',async()=>{
  const elements=new Map();let frames=0;
  const context=new Proxy({measureText:()=>({width:24})},{get:(o,k)=>o[k]||(()=>{}),set:(o,k,v)=>(o[k]=v,true)});
- function element(selector){if(!elements.has(selector))elements.set(selector,{width:800,height:500,value:'TARIN-01',hidden:false,style:{},tagName:'CANVAS',handlers:{},classList:{add(){}},getContext:()=>context,getBoundingClientRect:()=>({width:1000,height:600}),setAttribute(){},appendChild(){},replaceChildren(...children){this.children=children;},focus(){},setPointerCapture(){},addEventListener(n,fn){this.handlers[n]=fn;}});return elements.get(selector);}
+ function element(selector){if(!elements.has(selector))elements.set(selector,{width:800,height:500,value:'TARIN-01',hidden:false,style:{},tagName:'CANVAS',handlers:{},classList:{add(){}},getContext:()=>context,getBoundingClientRect:()=>({width:1000,height:600}),setAttribute(){},appendChild(child){(this.children??=[]).push(child);},replaceChildren(...children){this.children=children;},focus(){this.focused=true;},setPointerCapture(){},addEventListener(n,fn){this.handlers[n]=fn;}});return elements.get(selector);}
  const windowEvents={};
- const sandbox={TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,sharesTreeCover,QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory,HUG_RANGE,HUG_DURATION,...engine,advanceWalk,walkingSprite,spriteFlip,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
+ const sandbox={PROTOCOL_VERSION,PROTOCOL_ERROR,applyCaveTerrain,packCaveTerrain,MINE_INFO,mineEntranceAt,TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,sharesTreeCover,QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory,HUG_RANGE,HUG_DURATION,...engine,advanceWalk,walkingSprite,spriteFlip,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
  vm.createContext(sandbox);
  const code=readFileSync(new URL('../game.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/start\(\);\s*$/,'globalThis.started=start();');
  vm.runInContext(code,sandbox);await sandbox.started;
@@ -69,6 +72,8 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  assert(sandbox.after.y>sandbox.before.y);assert.equal(sandbox.sentInput.y,1);
  assert.doesNotThrow(()=>windowEvents.keydown({target:null}));
  windowEvents.keyup({key:'S'});vm.runInContext('globalThis.isHoldingS=keys.has("s")',sandbox);assert.equal(sandbox.isHoldingS,false);
+ windowEvents.keydown({key:'s',target:{tagName:'BUTTON'},preventDefault(){}});vm.runInContext('update(.04)',sandbox);assert.equal(sandbox.sentInput.y,1);windowEvents.keyup({key:'s'});
+
  vm.runInContext('setPaused(true)',sandbox);assert.equal(element('#paused').hidden,false);
  element('#resume').onclick();assert.equal(element('#paused').hidden,true);
  element('#show-map').onclick();assert.equal(element('#map-panel').hidden,false);
@@ -77,7 +82,7 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  assert.equal(sandbox.menuState,true);assert.equal(sandbox.heldKeys,0);
  windowEvents.keydown({key:'Escape',target:{tagName:'CANVAS'},preventDefault(){}});assert.equal(element('#menu').open,false);
  vm.runInContext('connection.regenerate=seed=>globalThis.requestedSeed=seed',sandbox);
- element('#random-seed').onclick();assert.equal(sandbox.requestedSeed,'FERN-3F');
+ element('#random-seed').onclick();assert.equal(sandbox.requestedSeed,undefined);assert.equal(element('#random-seed').disabled,true);
 
  vm.runInContext(`
   connection.send=message=>globalThis.sentHug=message;
@@ -137,6 +142,38 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  `,sandbox);
  assert.equal(sandbox.sharedDraws.length,2);assert.deepEqual(Array.from(sandbox.sharedDraws,d=>d.alpha).sort(),[.42,.65]);
  vm.runInContext(`sharedDraws=[];drawCanopyPlayers(new Set([localId,'other']),[]);drawSprite=priorSprite;`,sandbox);assert.equal(sandbox.sharedDraws.length,1);
+
+ vm.runInContext(`state.stage='mine';state.players=[{id:localId,name:'Test',kind:'amy',x:15*TILE+16,y:19*TILE+16,walking:false}];state.creatures=[];receiveState(state);render();globalThis.currentStage=world.stage;`,sandbox);
+ assert.equal(sandbox.currentStage,'mine');assert.equal(element('#location-name').textContent,'Mineshaft');assert.equal(element('#seed-submit').disabled,true);
+ vm.runInContext(`state.stage='forest';receiveState(state);render();globalThis.currentStage=world.stage;`,sandbox);assert.equal(sandbox.currentStage,'forest');
+
+ vm.runInContext(`
+  const entrance=world.structures.find(s=>s.kind==='mine-entrance');left=entrance.x-100;top=entrance.y-100;canvas.width=400;canvas.height=400;
+  canvas.getBoundingClientRect=()=>({left:0,top:0,width:400,height:400});
+ `,sandbox);
+ element('#game').handlers.pointerdown({clientX:160,clientY:160,pointerType:'touch'});
+ assert.equal(element('#mine-info').hidden,false);assert.equal(element('#mine-info').textContent,MINE_INFO);
+ vm.runInContext(`mineInfoUntil=0;updateMineInfo();`,sandbox);assert.equal(element('#mine-info').hidden,true);
+ vm.runInContext(`state.stage='mine';state.worldSeed='TARIN-01:mine-visit:2';receiveState(state);globalThis.generatedCaveSeed=world.seed;`,sandbox);assert.equal(sandbox.generatedCaveSeed,'TARIN-01:mine-visit:2');
+
+ vm.runInContext(`state.stage='forest';delete state.worldSeed;const doorway=makeWorld(state.seed).portals[0];state.players[0].x=doorway.x;state.players[0].y=doorway.y+70;receiveState(state);updatePortalUI();connection.send=message=>globalThis.portalMessage=message;`,sandbox);
+ assert.equal(element('#portal-action').hidden,false);assert.match(element('#portal-action').textContent,/Enter mine/);element('#portal-action').onclick();assert.equal(sandbox.portalMessage.type,'use-portal');assert.equal(element('#game').focused,true);
+ windowEvents.keydown({key:'e',target:{tagName:'CANVAS'},preventDefault(){}});assert.equal(sandbox.portalMessage.type,'use-portal');
+
+ vm.runInContext(`connection.send=message=>globalThis.moderationMessage=message;renderOnlinePlayers([{id:localId,name:'Test',kind:'amy',stage:'forest'},{id:'guest',name:'Guest',kind:'tarin',stage:'mine'}],localId);`,sandbox);
+ assert.equal(element('#online-list').children.length,2);
+ const guestRow=element('#online-list').children[1];assert.match(guestRow.children[0].children[1].textContent,/Mine/);guestRow.children[1].onclick();assert.equal(sandbox.moderationMessage.type,'remove-player');assert.equal(sandbox.moderationMessage.targetId,'guest');
+ vm.runInContext(`renderOnlinePlayers([{id:localId,name:'Test',kind:'amy',stage:'forest'},{id:'guest',name:'Guest',kind:'tarin',stage:'mine'}],'guest');`,sandbox);assert.equal(element('#online-list').children[0].children.length,1);assert.equal(element('#online-list').children[1].children.length,2);
+
+ vm.runInContext(`
+  const authoritative=makeCave('authoritative-cave'),originalGenerator=makeCave;
+  makeCave=seed=>{const cave=originalGenerator(seed);cave.tiles.fill(5);cave.blocked.fill(1);return cave;};
+  state.stage='mine';state.worldSeed=authoritative.seed;state.terrain=packCaveTerrain(authoritative);receiveState(state);
+  globalThis.terrainMatches=world.tiles.every((v,i)=>v===authoritative.tiles[i])&&world.blocked.every((v,i)=>v===authoritative.blocked[i]);makeCave=originalGenerator;
+ `,sandbox);assert.equal(sandbox.terrainMatches,true);
+ vm.runInContext(`returnToLogin('You were removed by the host.');`,sandbox);assert.equal(element('#login').hidden,false);assert.equal(element('#join-error').hidden,false);assert.match(element('#join-error').textContent,/removed/);
+
+ vm.runInContext(`connection.onWelcome({id:'outdated',token:'invalid',protocolVersion:0});`,sandbox);assert.equal(element('#login').hidden,false);assert.match(element('#join-error').textContent,/updated/);
  assert(readFileSync(new URL('../assets/tarin.json',import.meta.url),'utf8').includes('tarin-front'));
 });
 

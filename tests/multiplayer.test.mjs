@@ -29,11 +29,10 @@ test('reconnect preserves player position; disconnected names expire and host ro
  const restored=room.join({name:'Tarin',character:'tarin',token:a.token},{});assert.equal(restored.id,a.id);assert.equal(restored.y,y);
  room.leave(restored);now=16000;room.tick(.05);assert(!room.sessions.has(a.token));assert.doesNotThrow(()=>join(room));
 });
-test('forest changes are shared, host-only, and reset every player to a walkable spawn',()=>{
- const room=new ForestRoom(types),a=join(room),b=join(room,'Amy','amy');const revision=room.sequence;
- assert.throws(()=>room.regenerate(b,'no'),/first connected/);room.regenerate(a,'shared-new-seed');
- const state=room.snapshot();assert.equal(state.seed,'shared-new-seed');assert(state.revision>revision);
- for(const p of state.players){assert.equal(p.x,room.world.spawn.x);assert.equal(p.y,room.world.spawn.y);assert.equal(p.walking,false);}
+test('forest regeneration is disabled for both the host and other players',()=>{
+ const room=new ForestRoom(types),a=join(room),b=join(room,'Amy','amy'),seed=room.world.seed,revision=room.sequence;
+ assert.throws(()=>room.regenerate(a,'host-seed'),/disabled/);assert.throws(()=>room.regenerate(b,'other-seed'),/disabled/);
+ assert.equal(room.world.seed,seed);assert.equal(room.sequence,revision);
 });
 
 // Real HTTP upgrade + WebSocket frames over paired streams: no listening port required.
@@ -66,8 +65,8 @@ test('two real WebSocket clients see character choice, movement, shared NPCs, re
  await waitFor(()=>states.a.hugs?.length===1&&states.b.hugs?.length===1);
  assert.deepEqual(states.a.hugs[0].players,[welcomeA.id,welcomeB.id]);
  assert(states.a.players.every(p=>p.hugging));
- b.regenerate('blocked');await waitFor(()=>errors.length>0);assert.match(errors[0],/first connected/);
- a.regenerate('both-see-this');await waitFor(()=>states.a.seed==='both-see-this'&&states.b.seed==='both-see-this');
+ b.regenerate('blocked');await waitFor(()=>errors.length>0);assert.match(errors[0],/disabled/);
+ a.regenerate('both-see-this');await waitFor(()=>errors.length===2);assert.match(errors[1],/disabled/);assert.equal(states.a.seed,'TARIN-01');assert.equal(states.b.seed,'TARIN-01');
  const oldId=welcomeB.id;const oldToken=b.token;
  const peer=[...game.wss.clients].find(ws=>ws.player?.id===oldId);peer.terminate();b.socket.terminate();
  await waitFor(()=>states.a.players.length===1);
@@ -88,9 +87,8 @@ test('WebSocket login rejects an occupied name and can retry with a different na
 });
 
 test('server honors analog joystick strength and keeps keyboard diagonal speed bounded',()=>{
- const room=new ForestRoom(types),a=join(room,'Full'),b=join(room,'Gentle'),c=join(room,'Diagonal');
- const initial=room.world.spawn;room.input(a,{x:0,y:1});room.input(b,{x:0,y:.25});room.input(c,{x:1,y:1});room.tick(.05);
- const full=a.y-initial.y,gentle=b.y-initial.y,diagonal=Math.hypot(c.x-initial.x,c.y-initial.y);
+ const distanceFor=(x,y)=>{const room=new ForestRoom(types),a=join(room,'Test');const initial={x:a.x,y:a.y};room.input(a,{x,y});room.tick(.05);return Math.hypot(a.x-initial.x,a.y-initial.y);};
+ const full=distanceFor(0,1),gentle=distanceFor(0,.25),diagonal=distanceFor(1,1);
  assert(Math.abs(gentle/full-.25)<1e-8);assert(Math.abs(diagonal-full)<1e-8);
 });
 
@@ -99,4 +97,72 @@ test('only one connected player can be Amy; leaving releases the character',()=>
  assert.throws(()=>join(room,'Amy two','amy'),/already being played/);
  assert(!room.snapshot().creatures.some(a=>a.kind==='amy'));
  room.logout(a);assert.doesNotThrow(()=>join(room,'Amy two','amy'));
+});
+
+test('real WebSocket clients transition between mine and forest without seeing players in the other stage',async t=>{
+ const game=createGameServer(),streams=[],WebSocketClass=transport(game,streams),states={},chat=[],terrainPackets={a:[],b:[]};let wa,wb;
+ const options=who=>({url:'ws://localhost/ws',WebSocketClass,onState:s=>{states[who]=s;if(s.terrain)terrainPackets[who].push(s.terrain);},onWelcome:m=>who==='a'?wa=m:wb=m,onStatus(){},onError(){},onChat:m=>chat.push(m)});
+ const a=new ForestConnection(options('a')),b=new ForestConnection(options('b'));
+ t.after(()=>{a.disconnect();b.disconnect();game.shutdown();for(const s of streams)s.destroy();game.server.close();});
+ a.connect({name:'Miner',character:'tarin'});b.connect({name:'Explorer',character:'amy'});await waitFor(()=>wa&&wb&&states.a?.players.length===2);
+ const pa=game.room.sessions.get(wa.token),pb=game.room.sessions.get(wb.token);
+ const doorway=game.room.world.portals[0];Object.assign(pa,{x:doorway.x,y:doorway.y+60});a.send({type:'use-portal'});await waitFor(()=>states.a.stage==='mine'&&states.b.players.length===1);
+ assert.equal(states.a.players.length,1);assert.equal(states.b.stage,'forest');assert.equal(states.a.creatures.length,0);
+ assert.equal(terrainPackets.a.length,1);assert.equal(terrainPackets.a[0].seed,game.room.worldFor(pa).seed);assert.equal(terrainPackets.b.length,0);
+ a.send({type:'chat',text:'Inside the mineshaft'});await waitFor(()=>chat.some(m=>m.text==='Inside the mineshaft'));
+ Object.assign(pb,game.room.world.portals[0]);await waitFor(()=>states.a.players.length===2&&states.b.stage==='mine');
+ assert.equal(terrainPackets.a.length,1);assert.equal(terrainPackets.b.length,1);assert.deepEqual(terrainPackets.b[0],terrainPackets.a[0]);
+ pa.portalCooldown=0;Object.assign(pa,game.room.worlds.mine.portals[0]);await waitFor(()=>states.a.stage==='forest'&&states.b.players.length===1);
+});
+
+test('online roster includes players in other stages without exposing their positions or tokens',()=>{
+ const room=new ForestRoom(types),a=join(room),b=join(room,'Amy','amy');room.changeStage(b,'mine');
+ const snapshot=room.snapshot(a.id);assert.equal(snapshot.players.length,1);assert.equal(snapshot.onlinePlayers.length,2);
+ const amy=snapshot.onlinePlayers.find(p=>p.id===b.id);assert.equal(amy.stage,'mine');assert.equal(amy.kind,'amy');assert(!('x' in amy));assert(!('token' in amy));
+ room.leave(b);assert.equal(room.snapshot(a.id).onlinePlayers.length,1);
+});
+test('player removals release sessions, character choices, names, and pending hugs',()=>{
+ const room=new ForestRoom(types),a=join(room),b=join(room,'Amy','amy');room.hugs.request(a,b.id);
+ assert.throws(()=>room.removePlayer({...a},b.id),/Join/);assert.throws(()=>room.removePlayer(a,a.id),/Leave/);
+ assert.equal(room.removePlayer(a,b.id),b);assert.equal(room.snapshot(a.id).onlinePlayers.length,1);assert(!room.sessions.has(b.token));assert.equal(room.hugs.requests.size,0);
+ assert.throws(()=>room.removePlayer(a,b.id),/no longer online/);assert.doesNotThrow(()=>join(room,'Amy','amy'));
+});
+test('a non-host can remove the host, disconnecting the target without auto-reconnect and allows a new join',async t=>{
+ const game=createGameServer(),streams=[],WebSocketClass=transport(game,streams),states={};let wa,wb,removed;const errors=[];
+ const base={url:'ws://localhost/ws',WebSocketClass,onStatus(){},onError:m=>errors.push(m)};
+ const a=new ForestConnection({...base,onWelcome:m=>wa=m,onState:s=>states.a=s,onRemoved:m=>removed=m}),b=new ForestConnection({...base,onWelcome:m=>wb=m,onState:s=>states.b=s});
+ t.after(()=>{a.disconnect();b.disconnect();game.shutdown();for(const s of streams)s.destroy();game.server.close();});
+ a.connect({name:'Host',character:'tarin'});await waitFor(()=>wa);
+ b.connect({name:'Guest',character:'amy'});await waitFor(()=>wb&&states.a?.onlinePlayers.length===2);
+ b.send({type:'remove-player',targetId:wa.id});await waitFor(()=>removed&&states.b.onlinePlayers.length===1);
+ assert.match(removed,/removed/);assert.equal(a.wantsConnection,false);assert.equal(a.token,null);assert.equal(a.welcomed,false);assert.equal(game.room.sessions.size,1);assert.equal(states.b.hostId,wb.id);
+ a.connect({name:'Host',character:'tarin'});await waitFor(()=>states.b.onlinePlayers.length===2&&a.welcomed);assert.equal(game.room.sessions.size,2);
+
+});
+
+test('stale clients without the current protocol cannot join with an old cave generator',async t=>{
+ const game=createGameServer(),streams=[],WebSocketClass=transport(game,streams),ws=new WebSocketClass('ws://localhost/ws');let error;
+ t.after(()=>{ws.terminate();game.shutdown();for(const s of streams)s.destroy();game.server.close();});
+ ws.on('open',()=>ws.send(JSON.stringify({type:'join',name:'Old browser',character:'tarin'})));
+ ws.on('message',data=>{const m=JSON.parse(data);if(m.type==='error')error=m.message;});
+ await waitFor(()=>error);assert.match(error,/updated/);assert.match(error,/refresh/);assert.equal(game.room.sessions.size,0);
+});
+
+test('only one connected Amy and one connected Tarin are allowed across all stages',()=>{
+ const room=new ForestRoom(types),tarin=join(room,'One','tarin'),amy=join(room,'Two','amy');room.changeStage(tarin,'mine');
+ assert.throws(()=>join(room,'Duplicate Tarin','tarin'),/Tarin is already/);assert.throws(()=>join(room,'Duplicate Amy','amy'),/Amy is already/);
+ assert.equal(room.snapshot(amy.id).onlinePlayers.length,2);
+ room.logout(tarin);assert.doesNotThrow(()=>join(room,'New Tarin','tarin'));
+ room.leave(amy);assert.doesNotThrow(()=>join(room,'New Amy','amy'));
+ assert.throws(()=>room.join({name:'Two',character:'amy',token:amy.token},{}),/Amy is already/);
+ assert.equal(room.snapshot().onlinePlayers.length,2);
+});
+test('WebSocket logins reject duplicate Tarins and allow the unused Amy slot',async t=>{
+ const game=createGameServer(),streams=[],WebSocketClass=transport(game,streams);let aReady=false,bReady=false,rejection;
+ const base={url:'ws://localhost/ws',WebSocketClass,onState(){},onStatus(){}};
+ const a=new ForestConnection({...base,onWelcome(){aReady=true;},onError(){}}),b=new ForestConnection({...base,onWelcome(){bReady=true;},onError:m=>rejection=m});
+ t.after(()=>{a.disconnect();b.disconnect();game.shutdown();for(const s of streams)s.destroy();game.server.close();});
+ a.connect({name:'First',character:'tarin'});await waitFor(()=>aReady);
+ b.connect({name:'Second',character:'tarin'});await waitFor(()=>rejection);assert.match(rejection,/Tarin is already/);assert.equal(bReady,false);assert.equal(game.room.snapshot().onlinePlayers.length,1);
+ b.connect({name:'Second',character:'amy'});await waitFor(()=>bReady);assert.equal(game.room.snapshot().onlinePlayers.length,2);
 });

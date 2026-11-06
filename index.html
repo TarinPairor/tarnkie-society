@@ -27,7 +27,7 @@
     <details id="menu" class="game-menu">
       <summary aria-label="Toggle game menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Menu</summary>
       <div class="menu-content">
-        <h1>Controls</h1><div class="session-info"><span id="session-name"></span><span id="player-count"></span><p id="online-list"></p><button id="logout">Leave / change character</button></div>
+        <h1>Controls</h1><div class="session-info"><span id="session-name"></span><span id="player-count"></span><h2 class="online-heading">Online players</h2><div id="online-list" aria-label="Online players"></div><p id="roster-help"></p><button id="logout">Leave / change character</button></div>
         <dl class="controls-list">
           <div><dt>Walk</dt><dd><kbd>WASD</kbd> / <kbd>↑ ↓ ← →</kbd></dd></div>
           <div><dt>Chat</dt><dd><kbd>Enter</kbd> / <kbd>C</kbd></dd></div><div><dt>Offer hug</dt><dd><kbd>H</kbd></dd></div><div><dt>Accept / deny hug</dt><dd><kbd>E</kbd> / <kbd>Q</kbd></dd></div><div><dt>Run</dt><dd><kbd>Shift</kbd></dd></div>
@@ -42,9 +42,9 @@
           <label><span>Live server chat</span><input id="show-server-chat" type="checkbox" checked></label>
         </fieldset>
         <form id="seed-form">
-          <label for="seed">Shared forest seed</label><p id="seed-note">The first connected player can change the forest for everyone.</p>
-          <input id="seed" value="TARIN-01" maxlength="48" autocomplete="off" spellcheck="false">
-          <div><button id="seed-submit" type="submit">Regenerate</button><button id="random-seed" type="button">Random forest</button></div>
+          <label for="seed">Shared forest seed</label><p id="seed-note">Forest changes are temporarily disabled.</p>
+          <input id="seed" disabled value="TARIN-01" maxlength="48" autocomplete="off" spellcheck="false">
+          <div><button id="seed-submit" type="submit" disabled>Regenerate</button><button id="random-seed" type="button" disabled>Random forest</button></div>
         </form>
         <div class="world-details"><span id="location-name">Fernwood</span><span id="coordinates">72, 73</span><span id="world-info"></span></div>
       </div>
@@ -66,10 +66,12 @@
     </section>
     <section id="server-chat" class="server-chat" aria-label="Live server chat" tabindex="0" hidden><div id="server-chat-messages"></div></section>
     <div id="chat-announcement" class="sr-only" role="log" aria-live="polite"></div>
+    <button id="portal-action" class="portal-action" type="button" hidden>Enter mine · E</button>
     <button id="hug-action" class="hug-action" type="button" hidden>Hug <kbd>H</kbd></button>
     <section id="hug-prompt" class="hug-prompt" aria-label="Hug request" hidden>
       <p id="hug-question" role="status"></p><div><button id="hug-accept" type="button">Accept <kbd>E</kbd></button><button id="hug-deny" type="button">Deny <kbd>Q</kbd></button></div><span id="hug-countdown"></span>
     </section>
+    <div id="mine-info" class="mine-info" role="status" hidden></div>
     <div id="hug-notice" role="status" hidden></div>
     <div class="touch-controls" aria-label="Touch movement controls">
       <div id="joystick" class="joystick" role="group" aria-label="Movement joystick. Drag to walk in any direction.">

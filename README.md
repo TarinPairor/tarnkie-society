@@ -7,7 +7,7 @@ npm install
 npm run dev
 ```
 
-Open the exact address printed by the server, normally **http://localhost:5174/**. If a Python server or another process occupies that port, the game automatically tries the next available port. You can explicitly use port 5175 with `npm run dev -- --port 5175`. Enter a unique display name, choose **Tarin** or **Amy**, and join. Open a second browser/tab with another name to play together. Amy is limited to one connected player at a time. Other players can choose Tarin. Amy never appears as a wandering AI character.
+Open the exact address printed by the server, normally **http://localhost:5174/**. If a Python server or another process occupies that port, the game automatically tries the next available port. You can explicitly use port 5175 with `npm run dev -- --port 5175`. Enter a unique display name, choose **Tarin** or **Amy**, and join. Open a second browser/tab with another name to play together. Only one connected **Amy** and one connected **Tarin** are allowed at a time across the entire server, including all mine instances. An occupied character cannot be selected from another browser or with another display name. Leaving, disconnecting, or being removed releases that character; reconnecting cannot displace someone who has claimed the slot. Amy never appears as a wandering AI character.
 
 For devices on the same Wi-Fi, open **http://<server-computer-LAN-IP>:5174/** on each device. All browsers must connect to the same Node server. HTTP and WebSockets share this port; HTTPS deployments automatically use WSS. A Python static server cannot run multiplayer.
 
@@ -28,7 +28,7 @@ Opening the menu, pausing, or switching windows stops your character. Other play
 
 One shared 144×144 forest has five connected villages, cottages, wells, fences, and wandering creatures. The server advances player movement and NPC AI at 20 Hz and broadcasts snapshots at 10 Hz. Clients interpolate positions and display names, character choices, facing, and walking frames in real time. Movement is collision checked on the server; stale inputs stop automatically. This remains a prototype without combat or building interiors.
 
-The first connected player controls the forest seed. Regeneration changes the world for everyone and resets players to the shared spawn. A disconnected player disappears immediately; automatic reconnect can recover their session and position within 15 seconds. Tab-local session storage also supports a quick refresh/rejoin. Display names are reserved for that 15-second grace period, then released. Leaving explicitly releases the name immediately. No account/password or persistent database is used: restarting the server resets sessions and the world.
+Forest regeneration and randomization are temporarily disabled for all players, including the host. The server rejects regeneration requests; the menu controls are read-only. A disconnected player disappears immediately; automatic reconnect can recover their session and position within 15 seconds. Tab-local session storage also supports a quick refresh/rejoin. Display names are reserved for that 15-second grace period, then released. Leaving explicitly releases the name immediately. No account/password or persistent database is used: restarting the server resets sessions and the world.
 
 Tarin and Amy use their custom standing sprites and two-frame walking cycles. Walking cadence follows distance traveled, running accelerates it, and facing follows the sprite's native direction. Tarin's source art faces left, so only rightward facing mirrors it. Assets are bundled in `assets/`. Refresh them with `npm run game:assets` inside `../retro-png-maker/`.
 
@@ -66,3 +66,31 @@ Menu → **Chat display** has independent **Above-head messages** and **Live ser
 The Minecraft-style corner feed shows `<Name> message`, retains up to 50 messages, scrolls through earlier lines, and sits above the joystick on phones. Hidden feeds continue receiving messages. Rejoining/reconnecting loads the server's recent history without duplicates; messages from players who leave remain in the feed. Forest regeneration preserves the feed; a server restart clears it. Quick messages and typed chat go to both displays, and the composer remains available with either display disabled.
 
 When two players are concealed by the same tree canopy, they can see each other through it: your own sprite remains at 42% opacity, and the other player appears at 65%. Their name, overhead chat, and nearby hug action become visible to you. Players outside that canopy, or hiding under a different tree, still cannot see them.
+
+## Mine northeast of Fernwood
+
+The forest has about 15% fewer trees. Follow the short trail northeast from Fernwood to the timber-and-rock mineshaft near tile **86, 60**, marked in gold on the minimap. Walk into the opening to enter a separate cave stage. The transfer zone covers the full doorway, including slightly off-center approaches. When nearby, you can also press **E** or tap **Enter mine**; the cave exit has the same **E** / **Exit mine** action. Mobile and desktop movement use the same automatic entrance.
+
+The shared cave is procedurally generated from the forest seed, with 35 separated chambers, 1–5-tile-wide winding passages, timber supports, rails, and ore seams. Chambers are only 3–5 tiles across, with small five-tile junctions connecting multiple paths. Single-file passages include orthogonal bridges at every bend so diagonal corner contacts never create unreachable gray floor. Four larger junction chambers each connect several tunnels. Extra links create loops and alternate routes, and offset room centers plus curving tunnel paths break up long straight corridors. **Light gray is walkable floor; dark rock is solid.** Every floor tile is connected to the entry chamber. Each exit refreshes the cave for the next entry. Players still underground keep their existing cave instance; new entries use the refreshed one, so they cannot collide with players in a different layout. Players entering before an exit share that visit. Reconnecting restores the same cave instance within the reconnect grace period.
+
+To return, walk into the ladder/exit in the entry chamber near cave tile **15, 15**. A brief transition cooldown and separated arrival spots prevent bouncing back through a portal. The server maintains each player's stage, filters player visibility by stage, preserves cave location on reconnect, and keeps server chat shared across stages. Hugs require both players to be in the same stage.
+
+Click or tap the forest mine entrance to see its five-second info bubble: “Magic mines! Ever time you enter some thing is different 😕”. The bubble follows the entrance on screen, never catches taps, and closes on stage changes or another world click.
+
+## Online players and removal
+
+The Menu lists every currently connected player across the forest and all cave instances, with character, current area, and host/you labels. The first connected player is the host. Every connected player sees **Remove** buttons for all other online players, including the host. The server requires an active session but does not restrict removal to the host. You leave your own session using **Leave / change character**.
+
+Removal immediately releases the player's name and character, cancels their hugs, disconnects them, clears their resume token, and returns them to the join screen without automatic reconnection. This is a kick rather than a ban: they may explicitly join again. The host label transfers automatically when the host disconnects or is removed.
+
+## Cave floor / collision consistency
+
+Cave entry and reconnect send the server's exact floor tiles, collision tiles, and structures in a compact run-length encoded payload. Clients use that authoritative layout for drawing and the minimap rather than relying only on local procedural generation. It is sent once per stage/layout change, not with every movement update.
+
+Cave connectivity validation checks player-sized clearance at tile centers and crossings. Regression tests traverse all gray floor tiles using the real movement/collision code across multiple cave visits. Solid rock ledges use dark trim so they cannot be mistaken for light-gray floor.
+
+Forest and mine collision arrays are independent. Player movement uses `worldFor(player)`, selecting the correct stage and mine-visit instance. Cave terrain packets are explicitly tagged `mine` and cannot be applied to the overworld. Regression tests fill the entire overworld with obstacles while a miner walks, and fill the mine with walls while a forest player walks, proving neither stage blocks the other.
+
+## Updating local development
+
+After pulling or changing game code, restart any old server process and fully refresh existing browser tabs. `npm run dev` now uses Node watch mode and restarts the backend when imported code changes; `npm start` runs a normal persistent production server. Browser/server protocol checks reject stale builds rather than allowing an old visible cave to be paired with a new collision layout. Mine-entry and hug actions restore canvas focus, and movement keys still work if a game button held focus.

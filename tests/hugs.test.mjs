@@ -5,7 +5,7 @@ import {ForestRoom} from '../multiplayer.js';
 import {HUG_DURATION,HUG_REQUEST_TTL,HUG_RANGE} from '../hug-config.js';
 import {walkingSprite} from '../animation.js';
 import {canStand} from '../world.js';
-function setup(){let time=100;const room=new ForestRoom([],{now:()=>time});const a=room.join({name:'Tarin',character:'tarin'},{}),b=room.join({name:'Amy',character:'amy'},{}),c=room.join({name:'Other',character:'tarin'},{});return {room,a,b,c,advance:ms=>time+=ms};}
+function setup(){let time=100;const room=new ForestRoom([],{now:()=>time});const a=room.join({name:'Tarin',character:'tarin'},{}),b=room.join({name:'Amy',character:'amy'},{}),c={id:'unrelated-session',connection:null};return {room,a,b,c,advance:ms=>time+=ms};}
 test('hug waits for the addressed player’s explicit consent and exposes only involved requests',()=>{
  const {room,a,b,c}=setup(),request=room.hugs.request(a,b.id);
  assert(!a.hugId);assert(!b.hugId);assert.equal(room.snapshot(b.id).hugRequests[0].id,request.id);assert.equal(room.snapshot(c.id).hugRequests.length,0);
@@ -23,7 +23,7 @@ test('denial never animates, notifies the requester, and prevents immediate repe
 test('busy, self, distant, blocked, and expired requests cannot create hugs',()=>{
  const {room,a,b,c,advance}=setup();assert.throws(()=>room.hugs.request(a,a.id),/closer/);
  b.x+=HUG_RANGE+20;assert.throws(()=>room.hugs.request(a,b.id),/closer/);b.x=a.x;
- const r=room.hugs.request(a,b.id);assert.throws(()=>room.hugs.request(c,b.id),/progress/);assert.throws(()=>room.hugs.request(b,a.id),/progress/);
+ const r=room.hugs.request(a,b.id);assert.throws(()=>room.hugs.request(b,a.id),/progress/);
  advance(HUG_REQUEST_TTL+1);assert.throws(()=>room.hugs.respond(b,r.id,true),/expired/);assert.equal(room.hugs.active.size,0);
  advance(3000);b.x=a.x+32;const index=Math.floor(a.y/32)*144+Math.floor((a.x+b.x)/2/32);room.world.blocked[index]=1;assert.throws(()=>room.hugs.request(a,b.id),/closer/);
 });

@@ -1,13 +1,18 @@
+import {PROTOCOL_VERSION,PROTOCOL_ERROR} from './protocol.js';
+import {applyCaveTerrain} from './terrain.js';
+import {MINE_INFO,mineEntranceAt} from './mine-info.js';
 import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,sharesTreeCover} from './trees.js';
 import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory} from './chat.js';
 import {HUG_RANGE,HUG_DURATION} from './hug-config.js';
 import {createTouchControls} from './touch.js';
 import {ForestConnection} from './network.js';
 import {walkingSprite,spriteFlip} from './animation.js';
-import {TILE,SIZE,makeWorld,makeCreatures,randomFromSeed} from './world.js';
+import {TILE,SIZE,makeWorld,makeCave,makeCreatures,randomFromSeed} from './world.js';
 const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d'),map=$('#map'),mapCtx=map.getContext('2d');
 const keys=new Set(),sprites=new Map(),treeSprites=[],grassSprites=[];
 let world,creatures=[],player,collection=[],camera={x:0,y:0},paused=false,ready=false,time=0,previous=0,viewWidth=800,viewHeight=500,mapVisible=false;
+let mineInfoAnchor=null,mineInfoUntil=0,nearbyPortal=null;
+let rosterSignature='';
 let menuOpen=false,connection=null,joined=false,localId=null,revision=null,remotePlayers=[];
 let hugRequests=[],hugEffects=new Map(),currentHugRequest=null,hugTarget=null,lastHugNotice=null,noticeUntil=0,lastOutgoingHug=null;
 let serverChatMessages=[],chatSettings={bubbles:true,server:true};
@@ -29,6 +34,11 @@ function makeTextures(){
   for(let j=0;j<15;j++){g.fillStyle=v===2?(j%2?'#c5ad79':'#ac955f'):(j%2?'#829958':'#567343');g.fillRect(Math.floor(random()*15)*2,Math.floor(random()*15)*2,j%3===0?4:2,2);}
   grassSprites.push(c);
  }
+ for(const base of ['#a9ada9','#1c2024']){
+  const c=surface(32,32),g=c.getContext('2d');g.fillStyle=base;g.fillRect(0,0,32,32);
+  for(let i=0;i<13;i++){g.fillStyle=base==='#a9ada9'?(i%2?'#b8bbb5':'#939994'):(i%2?'#282d32':'#161a1d');g.fillRect(Math.floor(random()*15)*2,Math.floor(random()*15)*2,2+i%3,2);}
+  grassSprites.push(c);
+ }
  for(let v=0;v<3;v++){
   const c=surface(48,64),g=c.getContext('2d');const rect=(x,y,w,h,color)=>{g.fillStyle=color;g.fillRect(x,y,w,h)};
   rect(21,45,8,19,'#514b32');rect(22,45,3,18,'#7b6941');
@@ -46,14 +56,15 @@ function makeTextures(){
  }
 }
 const mapBackground=surface(SIZE,SIZE),mapBackgroundCtx=mapBackground.getContext('2d');
-function generate(seed){
- world=makeWorld(seed);const types=collection.filter(o=>['Creatures','Monsters'].includes(o.category));creatures=makeCreatures(world,types);
+function generate(seed,stage='forest',terrain=null){
+ world=stage==='mine'?makeCave(seed):makeWorld(seed);if(terrain)applyCaveTerrain(world,terrain);const types=collection.filter(o=>['Creatures','Monsters'].includes(o.category));creatures=stage==='forest'?makeCreatures(world,types):[];
  player={...world.spawn,radius:7,flip:false,walking:false};camera={x:player.x,y:player.y};
  for(let y=0;y<SIZE;y++)for(let x=0;x<SIZE;x++){
-  const i=y*SIZE+x;mapBackgroundCtx.fillStyle=world.tiles[i]===2?'#c4ad78':world.blocked[i]?'#34573b':'#6d8950';mapBackgroundCtx.fillRect(x,y,1,1);
+  const i=y*SIZE+x;mapBackgroundCtx.fillStyle=world.stage==='mine'?(world.blocked[i]?'#202428':'#a9ada9'):world.tiles[i]===2?'#c4ad78':world.blocked[i]?'#34573b':'#6d8950';mapBackgroundCtx.fillRect(x,y,1,1);
  }
  for(const v of world.settlements){mapBackgroundCtx.fillStyle='#ebce91';mapBackgroundCtx.fillRect(v.x-1,v.y-1,3,3);}
- $('#world-info').textContent=`${creatures.length} wanderers · 15 cottages · 144 × 144 tiles`;
+ for(const portal of world.portals){mapBackgroundCtx.fillStyle='#f1c477';mapBackgroundCtx.fillRect(portal.x/TILE-2,portal.y/TILE-2,4,4);}
+ $('#world-info').textContent=world.stage==='mine'?'Mineshaft · connected caverns · 144 × 144 tiles':`${creatures.length} wanderers · mine northeast of Fernwood · 144 × 144 tiles`;
  clearInput();$('#seed').value=seed;try{history.replaceState(null,'',`#${encodeURIComponent(seed)}`);}catch{}
 }
 function resize(){const r=canvas.getBoundingClientRect();canvas.width=Math.max(1,Math.round(r.width));canvas.height=Math.max(1,Math.round(r.height));viewWidth=canvas.width/zoom;viewHeight=canvas.height/zoom;ctx.imageSmoothingEnabled=false;}
@@ -62,23 +73,30 @@ function setPaused(value){if(value)setChatOpen(false);paused=value;clearInput();
 $('#pause').onclick=()=>{if(ready){setPaused(!paused);if(paused)closeMenu();}};$('#resume').onclick=()=>{setPaused(false);closeMenu();};
 function toggleMap(){mapVisible=!mapVisible;$('#map-panel').hidden=!mapVisible;$('#show-map').innerHTML=`${mapVisible?'Hide':'Show'} map <kbd>M</kbd>`;$('#show-map').setAttribute('aria-pressed',String(mapVisible));}
 $('#toggle-map').onclick=toggleMap;$('#show-map').onclick=toggleMap;
-$('#seed-form').addEventListener('submit',e=>{e.preventDefault();if(!joined)return;connection.regenerate($('#seed').value.trim()||'TARIN-01');});
-$('#random-seed').onclick=()=>{if(!joined)return;connection.regenerate(`FERN-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36).toUpperCase()}`);};
+$('#seed-form').addEventListener('submit',e=>{e.preventDefault();showHugNotice('Forest changes are temporarily disabled.');});
+$('#random-seed').onclick=()=>{showHugNotice('Forest changes are temporarily disabled.');};
 window.addEventListener('keydown',e=>{
  if(!joined||typeof e.key!=='string')return;
  if(e.key==='Escape'&&chatOpen){e.preventDefault();setChatOpen(false);canvas.focus();return;}
  if(e.key==='Escape'&&menu.open){e.preventDefault();closeMenu();return;}
- if(['INPUT','TEXTAREA','BUTTON'].includes(e.target?.tagName))return;
+ if(['INPUT','TEXTAREA','SELECT'].includes(e.target?.tagName))return;
  const key=e.key.toLowerCase();
+ if(e.target?.tagName==='BUTTON'&&!['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright','shift'].includes(key))return;
  if((key==='enter'||key==='c')&&!e.repeat&&!menuOpen&&!paused){e.preventDefault();setChatOpen(!chatOpen);return;}
  if(chatOpen)return;
  if(!e.repeat&&currentHugRequest&&['e','q','escape'].includes(key)){e.preventDefault();respondToHug(key==='e');return;}
+ if(key==='e'&&!e.repeat&&nearbyPortal){e.preventDefault();useNearbyPortal();return;}
  if(key==='h'&&!e.repeat){e.preventDefault();offerHug();return;}if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright','shift','p','m',' '].includes(key))e.preventDefault();
  if(key==='p'&&!e.repeat&&ready){setPaused(!paused);return;}if(key==='m'&&!e.repeat){toggleMap();return;}
  if(joined&&!paused&&!menuOpen)keys.add(key);
 });
 window.addEventListener('keyup',e=>{if(typeof e.key==='string')keys.delete(e.key.toLowerCase());});window.addEventListener('blur',()=>{if(ready)setPaused(true);});document.addEventListener('visibilitychange',()=>{if(document.hidden&&ready)setPaused(true);});
-canvas.addEventListener('pointerdown',()=>{setChatOpen(false);closeMenu();});
+canvas.addEventListener('pointerdown',event=>{
+ setChatOpen(false);closeMenu();mineInfoAnchor=null;$('#mine-info').hidden=true;
+ if(!joined)return;
+ const bounds=canvas.getBoundingClientRect(),x=left+(event.clientX-bounds.left)*canvas.width/bounds.width/zoom,y=top+(event.clientY-bounds.top)*canvas.height/bounds.height/zoom;
+ const entrance=mineEntranceAt(world,x,y);if(entrance){mineInfoAnchor=entrance;mineInfoUntil=Date.now()+5000;$('#mine-info').textContent=MINE_INFO;updateMineInfo();}
+});
 $('#seed').addEventListener('focus',()=>keys.clear());
 touchControls=createTouchControls({joystick:$('#joystick'),thumb:$('#joystick-thumb'),sprint:$('#sprint'),enabled:()=>joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!player?.hugging});
 window.addEventListener('resize',clearInput);
@@ -96,17 +114,18 @@ function update(dt){
 }
 function receiveState(state){
  if(!ready)return;
- const reset=revision!==state.revision||world.seed!==state.seed;
- if(reset){generate(state.seed);revision=state.revision;hugEffects.clear();}
+ const worldSeed=state.worldSeed||state.seed;
+ const reset=!!state.terrain||revision!==state.revision||world.seed!==worldSeed||world.stage!==(state.stage||'forest');
+ if(reset){generate(worldSeed,state.stage||'forest',state.terrain);revision=state.revision;hugEffects.clear();mineInfoAnchor=null;$('#mine-info').hidden=true;}
  function merge(old,next){const existing=new Map(old.map(a=>[a.id,a]));return next.map(a=>{const previous=existing.get(a.id);return {...a,x:!reset&&previous?previous.x:a.x,y:!reset&&previous?previous.y:a.y,targetX:a.x,targetY:a.y,chatUntil:time+(a.chat?.remainingMs||0)/1000};});}
  const self=state.players.find(a=>a.id===localId);if(!self)return;
  const oldSelf=player;if(self.hugging&&!oldSelf.hugging)clearInput();player={...self,x:reset?self.x:oldSelf.x,y:reset?self.y:oldSelf.y,targetX:self.x,targetY:self.y,chatUntil:time+(self.chat?.remainingMs||0)/1000};
  if(reset)camera={x:self.x,y:self.y};
  remotePlayers=merge(remotePlayers,state.players.filter(a=>a.id!==localId));creatures=merge(creatures,state.creatures);
- $('#player-count').textContent=`${state.players.length} online`;
- $('#online-list').textContent=state.players.map(a=>`${a.name} (${a.kind==='amy'?'Amy':'Tarin'})`).join(' · ');
- const host=state.hostId===localId;$('#seed').disabled=!host;$('#random-seed').disabled=!host;$('#seed-submit').disabled=!host;
- $('#seed-note').textContent=host?'Changing this seed regenerates the forest for everyone.':'Only the first connected player can change the forest.';
+ $('#player-count').textContent=`${state.players.length} in this area · ${state.onlineCount??state.players.length} online`;
+ renderOnlinePlayers(state.onlinePlayers||state.players,state.hostId);
+ $('#seed').disabled=true;$('#random-seed').disabled=true;$('#seed-submit').disabled=true;
+ $('#seed-note').textContent='Forest changes are temporarily disabled.';
  hugRequests=state.hugRequests||[];
  const sent=hugRequests.find(r=>r.from===localId);if(sent&&sent.id!==lastOutgoingHug){lastOutgoingHug=sent.id;showHugNotice('Hug request sent.');}
  const incoming=hugRequests.find(r=>r.to===localId);
@@ -134,6 +153,25 @@ function drawTree(tree){const width=TREE_WIDTH*tree.size,height=TREE_HEIGHT*tree
 function drawStructure(s){
  if(s.kind==='house'){shadow(s.x,s.y,74);drawSprite('house',s.x,s.y+10,86);return;}
  const x=Math.round(s.x),y=Math.round(s.y);const rect=(dx,dy,w,h,color)=>{ctx.fillStyle=color;ctx.fillRect(x+dx,y+dy,w,h)};
+ if(s.kind==='mine-entrance'){
+  rect(-58,-64,116,70,'#424944');rect(-45,-80,90,17,'#59615a');rect(-31,-91,62,12,'#697266');
+  rect(-29,-53,58,59,'#101718');rect(-35,-58,10,65,'#7e5834');rect(25,-58,10,65,'#7e5834');rect(-39,-62,78,11,'#ad824c');
+  rect(-33,-53,5,52,'#ba955f');rect(27,-53,5,52,'#5c4029');rect(-34,-59,4,4,'#dbbd7a');rect(30,-59,4,4,'#dbbd7a');
+  rect(-17,-9,4,51,'#777c76');rect(13,-9,4,51,'#777c76');for(let dy=-5;dy<45;dy+=11)rect(-20,dy,40,4,'#796044');
+  rect(-49,-31,7,14,'#daa746');rect(-49,-33,7,5,'#ffe3a0');return;
+ }
+ if(s.kind==='mine-support'){
+  for(const side of [-1,1]){rect(side*48-4,-40,8,44,'#65503a');rect(side*48-2,-36,3,38,'#a58355');}
+  rect(-56,-48,112,10,'#8c704a');rect(-54,-46,108,3,'#bd9a61');
+  for(let dy=8;dy<38;dy+=10)rect(-19,dy,38,4,'#715d45');rect(-15,2,3,38,'#7a8284');rect(12,2,3,38,'#7a8284');return;
+ }
+ if(s.kind==='mine-exit'){
+  rect(-22,-54,44,60,'#101619');rect(-26,-56,7,62,'#856439');rect(19,-56,7,62,'#856439');rect(-28,-60,56,8,'#b18c57');
+  rect(-12,-52,4,58,'#b29a6c');rect(8,-52,4,58,'#b29a6c');for(let dy=-48;dy<6;dy+=10)rect(-9,dy,20,3,'#d1b77e');
+  rect(-31,-31,5,13,'#dfae50');rect(-32,-35,7,7,'#ffe5a0');return;
+ }
+ if(s.kind==='ore'){const color=['#8faaa8','#b9a66e','#a18cbb'][s.variant];rect(-8,-13,8,7,color);rect(3,-7,6,8,color);rect(-2,-19,5,4,color);return;}
+
  if(s.kind==='well'){
   shadow(x,y,27);rect(-14,-14,28,15,'#8b9278');rect(-11,-17,22,9,'#bdc0a0');rect(-7,-14,14,7,'#355b60');rect(-13,-36,3,24,'#746442');rect(10,-36,3,24,'#746442');rect(-18,-39,36,6,'#946c48');rect(-12,-44,24,5,'#b38b5b');rect(-6,-47,12,3,'#c5a16c');rect(-2,-33,2,18,'#c9b27f');
  }else if(s.kind==='fence'){rect(-16,-13,32,4,'#9c8a5c');rect(-16,-5,32,3,'#9c8a5c');rect(-14,-20,4,25,'#c3ad78');rect(11,-20,4,25,'#c3ad78');}
@@ -145,6 +183,7 @@ function render(){
  const minX=Math.max(0,Math.floor(left/TILE)),maxX=Math.min(SIZE-1,Math.ceil((left+viewWidth)/TILE)),minY=Math.max(0,Math.floor(top/TILE)),maxY=Math.min(SIZE-1,Math.ceil((top+viewHeight)/TILE));
  for(let y=minY;y<=maxY;y++)for(let x=minX;x<=maxX;x++){
   const tile=world.tiles[y*SIZE+x];ctx.drawImage(grassSprites[tile],x*TILE,y*TILE);
+  if(tile===5&&y+1<SIZE&&world.tiles[(y+1)*SIZE+x]===4){ctx.fillStyle='#262d31';ctx.fillRect(x*TILE,y*TILE+22,32,10);ctx.fillStyle='#384043';ctx.fillRect(x*TILE,y*TILE+29,32,3);}
   if(tile===2){ctx.fillStyle='#8b895050';for(const [ox,oy] of [[-1,0],[1,0],[0,-1],[0,1]]){const xx=x+ox,yy=y+oy;if(xx>=0&&yy>=0&&xx<SIZE&&yy<SIZE&&world.tiles[yy*SIZE+xx]!==2){if(ox)ctx.fillRect(x*TILE+(ox>0?29:0),y*TILE,3,32);else ctx.fillRect(x*TILE,y*TILE+(oy>0?29:0),32,3);}}}
  }
  for(const d of world.decor)if(visible(d.x,d.y,30))drawSprite(d.kind,d.x,d.y,24*d.scale);
@@ -168,7 +207,7 @@ function render(){
  drawHugHearts();
  drawChatBubbles(concealed);
  ctx.setTransform(1,0,0,1,0,0);
- const nearest=world.settlements.find(v=>Math.hypot(player.x/TILE-v.x,player.y/TILE-v.y)<12);$('#location-name').textContent=nearest?.name||'Deep forest';$('#coordinates').textContent=`${Math.floor(player.x/TILE)}, ${Math.floor(player.y/TILE)}`;
+ const nearest=world.settlements.find(v=>Math.hypot(player.x/TILE-v.x,player.y/TILE-v.y)<12);$('#location-name').textContent=world.stage==='mine'?'Mineshaft':nearest?.name||'Deep forest';$('#coordinates').textContent=`${Math.floor(player.x/TILE)}, ${Math.floor(player.y/TILE)}`;
  if(mapVisible){mapCtx.imageSmoothingEnabled=false;mapCtx.drawImage(mapBackground,0,0);mapCtx.strokeStyle='#edf3cda0';mapCtx.lineWidth=1;mapCtx.strokeRect(left/TILE,top/TILE,viewWidth/TILE,viewHeight/TILE);mapCtx.fillStyle='#f6edc8';mapCtx.fillRect(Math.floor(player.x/TILE)-1,Math.floor(player.y/TILE)-1,3,3);}
 }
 function drawPlayerName(p,size){
@@ -195,7 +234,7 @@ function drawLocalSilhouette(concealed){
  ctx.restore();
 }
 function showHugNotice(text){const notice=$('#hug-notice');notice.textContent=text;noticeUntil=Date.now()+2200;notice.hidden=false;if(!reducedMotion){notice.getAnimations?.().forEach(a=>a.cancel());notice.animate?.([{opacity:0,offset:0},{opacity:1,offset:.08},{opacity:1,offset:.75},{opacity:0,offset:1}],{duration:2200,fill:'both'});}}
-function offerHug(){if(hugRequests.some(r=>r.from===localId||r.to===localId)||!hugTarget||!joined||!connection?.welcomed||paused||menuOpen||chatOpen||player.hugging)return;connection.send({type:'hug-request',targetId:hugTarget.id});clearInput();}
+function offerHug(){if(hugRequests.some(r=>r.from===localId||r.to===localId)||!hugTarget||!joined||!connection?.welcomed||paused||menuOpen||chatOpen||player.hugging)return;connection.send({type:'hug-request',targetId:hugTarget.id});clearInput();canvas.focus();}
 function respondToHug(accept){if(!currentHugRequest||!connection?.welcomed)return;connection.send({type:'hug-response',requestId:currentHugRequest.id,accept});currentHugRequest=null;$('#hug-prompt').hidden=true;clearInput();canvas.focus();}
 $('#hug-action').onclick=offerHug;$('#hug-accept').onclick=()=>respondToHug(true);$('#hug-deny').onclick=()=>respondToHug(false);
 function updateHugUI(){
@@ -269,7 +308,23 @@ function drawChatBubbles(concealed=new Set()){
   ctx.fillStyle='#243c35';lines.forEach((line,i)=>ctx.fillText(line,x+8,y+6+i*12));ctx.restore();
  }
 }
-function frame(now){const dt=Math.min(.04,(now-previous)/1000||0);previous=now;if(ready){time+=dt;if(joined)update(dt);render();updateHugUI();updateChatUI();}requestAnimationFrame(frame);}
+function useNearbyPortal(){if(!joined||!connection?.welcomed||!nearbyPortal||paused||menuOpen||chatOpen||player.hugging)return;clearInput();connection.send({type:'use-portal'});canvas.focus();}
+$('#portal-action').onclick=useNearbyPortal;
+function updatePortalUI(){
+ nearbyPortal=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen&&!player.hugging?world.portals.find(portal=>Math.hypot(player.x-portal.x,player.y-portal.y)<=90):null;
+ const button=$('#portal-action');button.hidden=!nearbyPortal;
+ if(nearbyPortal)button.textContent=world.stage==='forest'?'Enter mine · E':'Exit mine · E';
+}
+function updateMineInfo(){
+ const bubble=$('#mine-info');
+ if(!mineInfoAnchor||Date.now()>=mineInfoUntil||!joined||world.stage!=='forest'){bubble.hidden=true;mineInfoAnchor=null;return;}
+ const screenX=(mineInfoAnchor.x-left)*zoom,screenY=(mineInfoAnchor.y-top)*zoom;
+ if(screenX<0||screenX>canvas.width||screenY<-100||screenY>canvas.height+100){bubble.hidden=true;return;}
+ bubble.hidden=false;const width=bubble.offsetWidth||260,height=bubble.offsetHeight||80;
+ bubble.style.left=`${Math.max(width/2+10,Math.min(canvas.width-width/2-10,screenX))}px`;
+ bubble.style.top=`${Math.max(12,screenY-100*zoom-height)}px`;
+}
+function frame(now){const dt=Math.min(.04,(now-previous)/1000||0);previous=now;if(ready){time+=dt;if(joined)update(dt);render();updateHugUI();updateChatUI();updateMineInfo();updatePortalUI();}requestAnimationFrame(frame);}
 async function start(){
  try{
   const results=await Promise.all(['./assets/collection.json','./assets/actors.json'].map(async url=>{const res=await fetch(url);if(!res.ok)throw new Error(`Could not load ${url}`);return res.json();}));
@@ -281,10 +336,23 @@ async function start(){
   $('#player-name').focus();requestAnimationFrame(frame);
  }catch(error){$('#loading').textContent=`The forest could not load. Run npm install and npm run dev in the game folder, then open http://localhost:5174/. ${error.message}`;$('#loading').classList.add('error');}
 }
+function renderOnlinePlayers(roster,hostId){
+ const signature=JSON.stringify([localId,hostId,roster]);if(signature===rosterSignature)return;rosterSignature=signature;
+ const rows=roster.map(person=>{
+  const row=document.createElement('div');row.className='online-player';
+  const label=document.createElement('span');label.textContent=`${person.name}${person.id===localId?' (you)':''}${person.id===hostId?' · Host':''}`;
+  const detail=document.createElement('small');detail.textContent=`${person.kind==='amy'?'Amy':'Tarin'} · ${person.stage==='mine'?'Mine':'Forest'}`;
+  const info=document.createElement('div');info.appendChild(label);info.appendChild(detail);row.appendChild(info);
+  if(person.id!==localId){const button=document.createElement('button');button.type='button';button.textContent='Remove';button.setAttribute('aria-label',`Remove ${person.name}`);button.onclick=()=>connection.send({type:'remove-player',targetId:person.id});row.appendChild(button);}
+  return row;
+ });
+ $('#online-list').replaceChildren(...rows);$('#roster-help').textContent='You can remove any other player, including the host.';
+}
 function showError(message,context){if(context==='chat'){pendingChat=null;$('#chat-feedback').textContent=message;return;}if(joined){if(connection?.welcomed)$('#connection-status').hidden=true;showHugNotice(message);return;}$('#join-error').textContent=message;$('#join-error').hidden=false;$('#join-button').disabled=false;}
-connection=new ForestConnection({onChat:message=>addServerChat([message]),url:`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/ws`,onState:receiveState,
- onWelcome(message){serverChatMessages=[];savedProfile={name:$('#player-name').value.trim(),character:selectedCharacter,token:message.token};try{sessionStorage.setItem('forest-profile',JSON.stringify(savedProfile));}catch{}localId=message.id;joined=true;addServerChat(message.chatHistory||[]);revision=null;$('#login').hidden=true;canvas.setAttribute('aria-label',`Explore as ${selectedCharacter==='amy'?'Amy':'Tarin'}. WASD or arrows to walk, Shift to run. Open the menu for controls.`);$('#join-button').disabled=false;$('#session-name').textContent=`${$('#player-name').value.trim()} · ${selectedCharacter==='amy'?'Amy':'Tarin'}`;setPaused(false);closeMenu();},
- onStatus(status){$('#connection-status').textContent=status;$('#connection-status').hidden=status==='Connected';if(status!=='Connected'){clearInput();if(player)player.walking=false;for(const a of remotePlayers)a.walking=false;}},onError:showError});
+connection=new ForestConnection({onRemoved:message=>returnToLogin(message),onChat:message=>addServerChat([message]),url:`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/ws`,onState:receiveState,
+ onWelcome(message){if(message.protocolVersion!==PROTOCOL_VERSION){connection.disconnect();returnToLogin(PROTOCOL_ERROR);return;}serverChatMessages=[];savedProfile={name:$('#player-name').value.trim(),character:selectedCharacter,token:message.token};try{sessionStorage.setItem('forest-profile',JSON.stringify(savedProfile));}catch{}localId=message.id;joined=true;rosterSignature='';addServerChat(message.chatHistory||[]);revision=null;$('#login').hidden=true;canvas.setAttribute('aria-label',`Explore as ${selectedCharacter==='amy'?'Amy':'Tarin'}. WASD or arrows to walk, Shift to run. Open the menu for controls.`);$('#join-button').disabled=false;$('#session-name').textContent=`${$('#player-name').value.trim()} · ${selectedCharacter==='amy'?'Amy':'Tarin'}`;setPaused(false);closeMenu();},
+ onStatus(status){$('#connection-status').textContent=status;$('#connection-status').hidden=status==='Connected'||!joined;if(status!=='Connected'){clearInput();if(player)player.walking=false;for(const a of remotePlayers)a.walking=false;}},onError:showError});
 $('#join-form').addEventListener('submit',e=>{e.preventDefault();if(!ready)return;const name=$('#player-name').value.trim();if(!name||name.length>24){showError('Enter a name from 1 to 24 characters.');return;}selectedCharacter=$('input[name="character"]:checked').value;$('#join-error').hidden=true;$('#join-button').disabled=true;connection.connect({name,character:selectedCharacter,token:savedProfile?.name===name&&savedProfile?.character===selectedCharacter?savedProfile.token:undefined});});
-$('#logout').onclick=()=>{connection.disconnect();savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}setChatOpen(false);pendingChat=null;lastChatIds.clear();joined=false;serverChatMessages=[];renderServerChat();localId=null;remotePlayers=[];hugRequests=[];currentHugRequest=null;hugEffects.clear();$('#hug-prompt').hidden=true;$('#hug-action').hidden=true;clearInput();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=true;$('#player-name').focus();};
+function returnToLogin(reason=''){savedProfile=null;try{sessionStorage.removeItem('forest-profile');}catch{}setChatOpen(false);pendingChat=null;lastChatIds.clear();joined=false;serverChatMessages=[];renderServerChat();localId=null;remotePlayers=[];hugRequests=[];currentHugRequest=null;hugEffects.clear();$('#hug-prompt').hidden=true;$('#hug-action').hidden=true;clearInput();setPaused(false);closeMenu();$('#login').hidden=false;$('#connection-status').hidden=true;$('#join-button').disabled=false;$('#join-error').hidden=!reason;$('#join-error').textContent=reason;rosterSignature='';$('#online-list').replaceChildren();$('#player-name').focus();}
+$('#logout').onclick=()=>{connection.disconnect();returnToLogin();};
 start();
