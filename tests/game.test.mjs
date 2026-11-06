@@ -6,7 +6,7 @@ import * as engine from '../world.js';
 import {advanceWalk,walkingSprite,spriteFlip} from '../animation.js';
 import {ForestConnection} from '../network.js';
 import {createTouchControls} from '../touch.js';
-import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees} from '../trees.js';
+import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,sharesTreeCover} from '../trees.js';
 import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory} from '../chat.js';
 import {HUG_RANGE,HUG_DURATION} from '../hug-config.js';
 const {SIZE,TILE,makeWorld,canStand,moveActor,makeCreatures,updateCreature,randomFromSeed}=engine;
@@ -52,7 +52,7 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  const context=new Proxy({measureText:()=>({width:24})},{get:(o,k)=>o[k]||(()=>{}),set:(o,k,v)=>(o[k]=v,true)});
  function element(selector){if(!elements.has(selector))elements.set(selector,{width:800,height:500,value:'TARIN-01',hidden:false,style:{},tagName:'CANVAS',handlers:{},classList:{add(){}},getContext:()=>context,getBoundingClientRect:()=>({width:1000,height:600}),setAttribute(){},appendChild(){},replaceChildren(...children){this.children=children;},focus(){},setPointerCapture(){},addEventListener(n,fn){this.handlers[n]=fn;}});return elements.get(selector);}
  const windowEvents={};
- const sandbox={TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory,HUG_RANGE,HUG_DURATION,...engine,advanceWalk,walkingSprite,spriteFlip,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
+ const sandbox={TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,sharesTreeCover,QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory,HUG_RANGE,HUG_DURATION,...engine,advanceWalk,walkingSprite,spriteFlip,ForestConnection,createTouchControls,console,Math,Uint32Array,Set,Map,fetch:async url=>({ok:true,json:async()=>JSON.parse(readFileSync(new URL('../'+url,import.meta.url)))}),document:{querySelector:element,querySelectorAll:()=>[],createElement:()=>element('surface'+Math.random()),addEventListener(){}},window:{addEventListener(n,f){windowEvents[n]=f;}},matchMedia:()=>({matches:false}),ResizeObserver:class{constructor(cb){this.cb=cb;}observe(){this.cb();}},requestAnimationFrame(){frames++;},history:{replaceState(){}},location:{hash:''},crypto:{getRandomValues:a=>(a[0]=123,a)}};
  vm.createContext(sandbox);
  const code=readFileSync(new URL('../game.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replace(/start\(\);\s*$/,'globalThis.started=start();');
  vm.runInContext(code,sandbox);await sandbox.started;
@@ -129,6 +129,14 @@ test('game loads real Tarin, renders, accepts WASD, pauses, regenerates, and tog
  vm.runInContext(`addServerChat([{id:'feed-three',name:'Amy',text:'Still here'}]);`,sandbox);assert.equal(element('#server-chat').hidden,true);
  element('#show-server-chat').checked=true;element('#show-overhead-chat').checked=false;element('#show-overhead-chat').handlers.change();assert.equal(element('#server-chat').hidden,false);assert.equal(element('#server-chat-messages').children.length,3);
  vm.runInContext('globalThis.bubblesEnabled=chatSettings.bubbles',sandbox);assert.equal(sandbox.bubblesEnabled,false);
+
+ vm.runInContext(`
+  left=0;top=0;viewWidth=1000;viewHeight=600;player.x=336;player.y=330;remotePlayers[0].x=342;remotePlayers[0].y=330;
+  globalThis.sharedDraws=[];const priorSprite=drawSprite;drawSprite=(...args)=>sharedDraws.push({kind:args[0],alpha:ctx.globalAlpha});
+  drawCanopyPlayers(new Set([localId,'other']),[remotePlayers[0]]);
+ `,sandbox);
+ assert.equal(sandbox.sharedDraws.length,2);assert.deepEqual(Array.from(sandbox.sharedDraws,d=>d.alpha).sort(),[.42,.65]);
+ vm.runInContext(`sharedDraws=[];drawCanopyPlayers(new Set([localId,'other']),[]);drawSprite=priorSprite;`,sandbox);assert.equal(sandbox.sharedDraws.length,1);
  assert(readFileSync(new URL('../assets/tarin.json',import.meta.url),'utf8').includes('tarin-front'));
 });
 

@@ -1,4 +1,4 @@
-import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees} from './trees.js';
+import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,sharesTreeCover} from './trees.js';
 import {QUICK_MESSAGES,CHAT_LIMIT,cleanChat,wrapChat,mergeChatHistory} from './chat.js';
 import {HUG_RANGE,HUG_DURATION} from './hug-config.js';
 import {createTouchControls} from './touch.js';
@@ -148,7 +148,9 @@ function render(){
   if(tile===2){ctx.fillStyle='#8b895050';for(const [ox,oy] of [[-1,0],[1,0],[0,-1],[0,1]]){const xx=x+ox,yy=y+oy;if(xx>=0&&yy>=0&&xx<SIZE&&yy<SIZE&&world.tiles[yy*SIZE+xx]!==2){if(ox)ctx.fillRect(x*TILE+(ox>0?29:0),y*TILE,3,32);else ctx.fillRect(x*TILE,y*TILE+(oy>0?29:0),32,3);}}}
  }
  for(const d of world.decor)if(visible(d.x,d.y,30))drawSprite(d.kind,d.x,d.y,24*d.scale);
- const concealed=new Set([...remotePlayers,...(joined?[player]:[])].filter(p=>hiddenByTrees(world.trees,p)).map(p=>p.id));
+ const treeConcealed=new Set([...remotePlayers,...(joined?[player]:[])].filter(p=>hiddenByTrees(world.trees,p)).map(p=>p.id));
+ const sharedCanopy=joined?remotePlayers.filter(p=>treeConcealed.has(p.id)&&sharesTreeCover(world.trees,player,p)):[];
+ const concealed=new Set(treeConcealed);for(const p of sharedCanopy)concealed.delete(p.id);
  const draws=[];
  for(const tree of world.trees)if(visible(tree.x,tree.y))draws.push({y:tree.y,draw:()=>drawTree(tree)});
  for(const s of world.structures)if(visible(s.x,s.y))draws.push({y:s.y,draw:()=>drawStructure(s)});
@@ -158,18 +160,33 @@ function render(){
  }});
  for(const p of [...remotePlayers,...(joined?[player]:[])])if(visible(p.x,p.y,60))draws.push({y:p.y,layer:p.hugging?(p.kind==='tarin'?2:1):0,draw:()=>{
   const size=p.kind==='amy'?32:43;shadow(p.x,p.y,22);drawSprite(walkingSprite(p,p.kind||selectedCharacter),p.x,p.y,size,spriteFlip(p,p.kind||selectedCharacter));
-  if(concealed.has(p.id))return;
-  ctx.font='8px sans-serif';ctx.textAlign='center';const width=ctx.measureText(p.name||'').width+10;const nameX=p.x+(p.hugging?(p.flip?16:-16):0);ctx.fillStyle='#183127d9';ctx.fillRect(Math.round(nameX-width/2),Math.round(p.y-size-15),width,12);ctx.fillStyle='#f1ebcf';ctx.fillText(p.name||'',Math.round(nameX),Math.round(p.y-size-6));
+  if(treeConcealed.has(p.id))return;
+  drawPlayerName(p,size);
  }});
  draws.sort((a,b)=>a.y-b.y||(a.layer||0)-(b.layer||0));for(const d of draws)d.draw();
- drawLocalSilhouette(concealed);
+ drawCanopyPlayers(treeConcealed,sharedCanopy);
  drawHugHearts();
  drawChatBubbles(concealed);
  ctx.setTransform(1,0,0,1,0,0);
  const nearest=world.settlements.find(v=>Math.hypot(player.x/TILE-v.x,player.y/TILE-v.y)<12);$('#location-name').textContent=nearest?.name||'Deep forest';$('#coordinates').textContent=`${Math.floor(player.x/TILE)}, ${Math.floor(player.y/TILE)}`;
  if(mapVisible){mapCtx.imageSmoothingEnabled=false;mapCtx.drawImage(mapBackground,0,0);mapCtx.strokeStyle='#edf3cda0';mapCtx.lineWidth=1;mapCtx.strokeRect(left/TILE,top/TILE,viewWidth/TILE,viewHeight/TILE);mapCtx.fillStyle='#f6edc8';mapCtx.fillRect(Math.floor(player.x/TILE)-1,Math.floor(player.y/TILE)-1,3,3);}
 }
-// This overlay exists only on the owning client; remote characters stay occluded.
+function drawPlayerName(p,size){
+ ctx.font='8px sans-serif';ctx.textAlign='center';const width=ctx.measureText(p.name||'').width+10;
+ const nameX=p.x+(p.hugging?(p.flip?16:-16):0);ctx.fillStyle='#183127d9';ctx.fillRect(Math.round(nameX-width/2),Math.round(p.y-size-15),width,12);ctx.fillStyle='#f1ebcf';ctx.fillText(p.name||'',Math.round(nameX),Math.round(p.y-size-6));
+}
+function drawCanopyPlayers(concealed,shared){
+ const overlays=[...shared,...(joined&&concealed.has(localId)?[player]:[])];
+ overlays.sort((a,b)=>a.y-b.y||(a.hugging&&a.kind==='tarin'?2:1)-(b.hugging&&b.kind==='tarin'?2:1));
+ for(const p of overlays){
+  if(!visible(p.x,p.y,60))continue;
+  if(p.id===localId){drawLocalSilhouette(concealed);continue;}
+  const size=p.kind==='amy'?32:43;
+  ctx.save();ctx.globalAlpha=.65;drawSprite(walkingSprite(p,p.kind),p.x,p.y,size,spriteFlip(p,p.kind));ctx.restore();
+  drawPlayerName(p,size);
+ }
+}
+// Local silhouette is always visible; remote overlays require a shared canopy.
 function drawLocalSilhouette(concealed){
  if(!joined||player.id!==localId||!concealed.has(localId))return;
  const kind=player.kind||selectedCharacter;
@@ -183,7 +200,7 @@ function respondToHug(accept){if(!currentHugRequest||!connection?.welcomed)retur
 $('#hug-action').onclick=offerHug;$('#hug-accept').onclick=()=>respondToHug(true);$('#hug-deny').onclick=()=>respondToHug(false);
 function updateHugUI(){
  const available=joined&&connection?.welcomed&&!paused&&!menuOpen&&!chatOpen;
- hugTarget=available&&!player.hugging?remotePlayers.filter(p=>!p.hugging&&!hiddenByTrees(world.trees,p)&&Math.hypot(p.x-player.x,p.y-player.y)<=HUG_RANGE).sort((a,b)=>Math.hypot(a.x-player.x,a.y-player.y)-Math.hypot(b.x-player.x,b.y-player.y))[0]:null;
+ hugTarget=available&&!player.hugging?remotePlayers.filter(p=>!p.hugging&&(!hiddenByTrees(world.trees,p)||sharesTreeCover(world.trees,player,p))&&Math.hypot(p.x-player.x,p.y-player.y)<=HUG_RANGE).sort((a,b)=>Math.hypot(a.x-player.x,a.y-player.y)-Math.hypot(b.x-player.x,b.y-player.y))[0]:null;
  const outgoing=hugRequests.find(r=>r.from===localId),action=$('#hug-action');
  action.hidden=!available||!hugTarget||!!outgoing||!!currentHugRequest||!!player.hugging;
  action.disabled=!!outgoing;action.textContent=outgoing?'Hug requested…':hugTarget?`Hug ${hugTarget.name} · H`:'';

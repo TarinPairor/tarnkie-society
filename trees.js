@@ -11,3 +11,14 @@ export function hiddenByTrees(trees,actor){
  const height=actor.kind==='amy'?32:43;
  return [height*.35,height*.6,height*.85].filter(offset=>trees.some(tree=>tree.y>actor.y&&Math.abs(tree.x-actor.x)<TREE_WIDTH*tree.size/2&&treeCoversPoint(tree,actor.x,actor.y-offset))).length>=2;
 }
+
+// Both characters must be covered by the same actual canopy, not just nearby trees.
+export function sharesTreeCover(trees,viewer,other){
+ if(!viewer||!other)return false;
+ function coveredBy(tree,actor){
+  if(tree.y<=actor.y||Math.abs(tree.x-actor.x)>=TREE_WIDTH*tree.size/2)return false;
+  const height=actor.kind==='amy'?32:43;
+  return [height*.35,height*.6,height*.85].filter(offset=>treeCoversPoint(tree,actor.x,actor.y-offset)).length>=2;
+ }
+ return trees.some(tree=>coveredBy(tree,viewer)&&coveredBy(tree,other));
+}

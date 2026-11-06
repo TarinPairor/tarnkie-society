@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {SIZE,TILE,canStand,moveActor,makeWorld} from '../world.js';
-import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,treeCoversPoint} from '../trees.js';
+import {TREE_WIDTH,TREE_HEIGHT,hiddenByTrees,treeCoversPoint,sharesTreeCover} from '../trees.js';
 
 test('trees have larger canopies but block just the small trunk footprint',()=>{
  const world={blocked:new Uint8Array(SIZE*SIZE)},tx=10,ty=10;world.blocked[ty*SIZE+tx]=2;
@@ -36,4 +36,16 @@ test('generated trees use trunk collision while buildings retain solid collision
   assert(!canStand(world,t.x,ty*TILE+26,4));
  }
  for(const s of world.structures.filter(s=>s.kind==='house'))assert.equal(world.blocked[Math.floor(s.y/TILE)*SIZE+Math.floor(s.x/TILE)],1);
+});
+
+test('players under one canopy can see each other in both directions',()=>{
+ const tree={x:336,y:345,size:1,variant:0},a={x:330,y:330,kind:'tarin'},b={x:342,y:330,kind:'amy'};
+ assert(sharesTreeCover([tree],a,b));assert(sharesTreeCover([tree],b,a));
+ assert(!sharesTreeCover([tree],a,{...b,x:410}));assert(!sharesTreeCover([tree],a,{...b,y:360}));
+ assert(!sharesTreeCover([tree],{...a,x:410},b));
+});
+test('being hidden under different trees does not expose players to each other',()=>{
+ const trees=[{x:336,y:345,size:1,variant:0},{x:420,y:345,size:1,variant:1}],a={x:336,y:330,kind:'tarin'},b={x:420,y:330,kind:'amy'};
+ assert(hiddenByTrees(trees,a));assert(hiddenByTrees(trees,b));assert(!sharesTreeCover(trees,a,b));
+ assert(!sharesTreeCover(trees,null,b));
 });
